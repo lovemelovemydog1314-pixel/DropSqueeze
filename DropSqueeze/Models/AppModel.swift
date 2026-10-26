@@ -1178,6 +1178,7 @@ final class AppModel: ObservableObject {
                         bitrateTarget: settings.videoBitrateTarget,
                         maximumFrameRate: settings.videoFrameRate,
                         includesAudio: settings.videoIncludesAudio,
+                        maximumSizeMB: settings.videoMaximumSizeMB,
                         outputDirectory: outputDirectory,
                         cancellation: videoCancellation,
                         onProgress: { [weak self] progress in

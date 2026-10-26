@@ -1,0 +1,166 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* DropSqueezeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* DropSqueezeApp.swift */; };
+		A10000000000000000000002 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* AppModel.swift */; };
+		A10000000000000000000003 /* ClipboardMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* ClipboardMonitor.swift */; };
+		A10000000000000000000004 /* DirectoryWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* DirectoryWatcher.swift */; };
+		A10000000000000000000005 /* ImageCompressor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* ImageCompressor.swift */; };
+		A10000000000000000000006 /* VideoTranscoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* VideoTranscoder.swift */; };
+		A10000000000000000000007 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* MenuBarView.swift */; };
+		A10000000000000000000008 /* DropZonePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* DropZonePanel.swift */; };
+		A10000000000000000000009 /* GIFGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011 /* GIFGenerator.swift */; };
+		A1000000000000000000000A /* PurchaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* PurchaseManager.swift */; };
+		A1000000000000000000000B /* RulesSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* RulesSettings.swift */; };
+		A1000000000000000000000C /* UsageTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000014 /* UsageTracker.swift */; };
+		A1000000000000000000000D /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000015 /* SettingsView.swift */; };
+		A1000000000000000000000E /* PaywallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000016 /* PaywallView.swift */; };
+		A1000000000000000000000F /* CompressionNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000017 /* CompressionNotifications.swift */; };
+		A10000000000000000000010 /* ShortcutActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000018 /* ShortcutActions.swift */; };
+		A10000000000000000000011 /* OutputComparisonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000019 /* OutputComparisonView.swift */; };
+		A10000000000000000000012 /* PDFCompressor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000020 /* PDFCompressor.swift */; };
+		A20000000000000000000001 /* VideoTargetSizeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* VideoTargetSizeTests.swift */; };
+		A20000000000000000000002 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003 /* XCTest.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		B10000000000000000000001 /* DropSqueezeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropSqueezeApp.swift; sourceTree = "<group>"; };
+		B10000000000000000000002 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		B10000000000000000000003 /* ClipboardMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardMonitor.swift; sourceTree = "<group>"; };
+		B10000000000000000000004 /* DirectoryWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectoryWatcher.swift; sourceTree = "<group>"; };
+		B10000000000000000000005 /* ImageCompressor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageCompressor.swift; sourceTree = "<group>"; };
+		B10000000000000000000006 /* VideoTranscoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoTranscoder.swift; sourceTree = "<group>"; };
+		B10000000000000000000007 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
+		B10000000000000000000008 /* DropZonePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropZonePanel.swift; sourceTree = "<group>"; };
+		B10000000000000000000009 /* DropSqueeze.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DropSqueeze.entitlements; sourceTree = "<group>"; };
+		B10000000000000000000010 /* DropSqueeze.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DropSqueeze.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10000000000000000000011 /* GIFGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GIFGenerator.swift; sourceTree = "<group>"; };
+		B10000000000000000000012 /* PurchaseManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PurchaseManager.swift; sourceTree = "<group>"; };
+		B10000000000000000000013 /* RulesSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RulesSettings.swift; sourceTree = "<group>"; };
+		B10000000000000000000014 /* UsageTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageTracker.swift; sourceTree = "<group>"; };
+		B10000000000000000000015 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		B10000000000000000000016 /* PaywallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaywallView.swift; sourceTree = "<group>"; };
+		B10000000000000000000017 /* CompressionNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompressionNotifications.swift; sourceTree = "<group>"; };
+		B10000000000000000000018 /* ShortcutActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutActions.swift; sourceTree = "<group>"; };
+		B10000000000000000000019 /* OutputComparisonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputComparisonView.swift; sourceTree = "<group>"; };
+		B10000000000000000000020 /* PDFCompressor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFCompressor.swift; sourceTree = "<group>"; };
+		B20000000000000000000001 /* DropSqueezeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DropSqueezeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B20000000000000000000002 /* VideoTargetSizeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoTargetSizeTests.swift; sourceTree = "<group>"; };
+		B20000000000000000000003 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		C10000000000000000000001 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		C20000000000000000000001 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A20000000000000000000002 /* XCTest.framework in Frameworks */, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		D10000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				D10000000000000000000002 /* DropSqueeze */,
+				D20000000000000000000001 /* DropSqueezeTests */,
+				D10000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		D10000000000000000000002 /* DropSqueeze */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000001 /* DropSqueezeApp.swift */,
+				D10000000000000000000004 /* Models */,
+				D10000000000000000000005 /* Core */,
+				D10000000000000000000006 /* Views */,
+				D10000000000000000000007 /* Resources */,
+			);
+			path = DropSqueeze;
+			sourceTree = "<group>";
+		};
+		D10000000000000000000003 /* Products */ = {isa = PBXGroup; children = (B10000000000000000000010 /* DropSqueeze.app */, B20000000000000000000001 /* DropSqueezeTests.xctest */, ); name = Products; sourceTree = "<group>"; };
+		D10000000000000000000004 /* Models */ = {isa = PBXGroup; children = (B10000000000000000000002 /* AppModel.swift */, B10000000000000000000012 /* PurchaseManager.swift */, B10000000000000000000013 /* RulesSettings.swift */, B10000000000000000000014 /* UsageTracker.swift */, ); path = Models; sourceTree = "<group>"; };
+		D10000000000000000000005 /* Core */ = {isa = PBXGroup; children = (B10000000000000000000003 /* ClipboardMonitor.swift */, B10000000000000000000004 /* DirectoryWatcher.swift */, B10000000000000000000005 /* ImageCompressor.swift */, B10000000000000000000006 /* VideoTranscoder.swift */, B10000000000000000000011 /* GIFGenerator.swift */, B10000000000000000000017 /* CompressionNotifications.swift */, B10000000000000000000018 /* ShortcutActions.swift */, B10000000000000000000020 /* PDFCompressor.swift */, ); path = Core; sourceTree = "<group>"; };
+		D10000000000000000000006 /* Views */ = {isa = PBXGroup; children = (B10000000000000000000007 /* MenuBarView.swift */, B10000000000000000000008 /* DropZonePanel.swift */, B10000000000000000000015 /* SettingsView.swift */, B10000000000000000000016 /* PaywallView.swift */, B10000000000000000000019 /* OutputComparisonView.swift */, ); path = Views; sourceTree = "<group>"; };
+		D10000000000000000000007 /* Resources */ = {isa = PBXGroup; children = (B10000000000000000000009 /* DropSqueeze.entitlements */, ); path = Resources; sourceTree = "<group>"; };
+		D20000000000000000000001 /* DropSqueezeTests */ = {isa = PBXGroup; children = (B20000000000000000000002 /* VideoTargetSizeTests.swift */, ); path = DropSqueezeTests; sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		E10000000000000000000001 /* DropSqueeze */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F10000000000000000000002 /* Build configuration list for PBXNativeTarget "DropSqueeze" */;
+			buildPhases = (C10000000000000000000001 /* Frameworks */, G10000000000000000000001 /* Sources */, H10000000000000000000001 /* Resources */, );
+			buildRules = ();
+			dependencies = ();
+			name = DropSqueeze;
+			productName = DropSqueeze;
+			productReference = B10000000000000000000010 /* DropSqueeze.app */;
+			productType = "com.apple.product-type.application";
+		};
+		E20000000000000000000001 /* DropSqueezeTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F30000000000000000000001 /* Build configuration list for PBXNativeTarget DropSqueezeTests */;
+			buildPhases = (C20000000000000000000001 /* Frameworks */, G20000000000000000000001 /* Sources */, );
+			buildRules = ();
+			dependencies = (J20000000000000000000001 /* PBXTargetDependency */, );
+			name = DropSqueezeTests;
+			productName = DropSqueezeTests;
+			productReference = B20000000000000000000001 /* DropSqueezeTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXContainerItemProxy section */
+		K20000000000000000000001 /* PBXContainerItemProxy */ = {isa = PBXContainerItemProxy; containerPortal = I10000000000000000000001 /* Project object */; proxyType = 1; remoteGlobalIDString = E10000000000000000000001; remoteInfo = DropSqueeze; };
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		J20000000000000000000001 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = E10000000000000000000001 /* DropSqueeze */; targetProxy = K20000000000000000000001 /* PBXContainerItemProxy */; };
+/* End PBXTargetDependency section */
+
+/* Begin PBXProject section */
+		I10000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 2700; BuildTargetParallelism = 8; };
+			buildConfigurationList = F10000000000000000000001 /* Build configuration list for PBXProject "DropSqueeze" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = zh-Hans;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base, zh-Hans, );
+			mainGroup = D10000000000000000000001;
+			productRefGroup = D10000000000000000000003 /* Products */;
+			projectDirPath = "";
+			targets = (E10000000000000000000001 /* DropSqueeze */, E20000000000000000000001 /* DropSqueezeTests */, );
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		H10000000000000000000001 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		G10000000000000000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001 /* DropSqueezeApp.swift in Sources */, A10000000000000000000002 /* AppModel.swift in Sources */, A10000000000000000000003 /* ClipboardMonitor.swift in Sources */, A10000000000000000000004 /* DirectoryWatcher.swift in Sources */, A10000000000000000000005 /* ImageCompressor.swift in Sources */, A10000000000000000000006 /* VideoTranscoder.swift in Sources */, A10000000000000000000007 /* MenuBarView.swift in Sources */, A10000000000000000000008 /* DropZonePanel.swift in Sources */, A10000000000000000000009 /* GIFGenerator.swift in Sources */, A1000000000000000000000A /* PurchaseManager.swift in Sources */, A1000000000000000000000B /* RulesSettings.swift in Sources */, A1000000000000000000000C /* UsageTracker.swift in Sources */, A1000000000000000000000D /* SettingsView.swift in Sources */, A1000000000000000000000E /* PaywallView.swift in Sources */, A1000000000000000000000F /* CompressionNotifications.swift in Sources */, A10000000000000000000010 /* ShortcutActions.swift in Sources */, A10000000000000000000011 /* OutputComparisonView.swift in Sources */, A10000000000000000000012 /* PDFCompressor.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
+		G20000000000000000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A20000000000000000000001 /* VideoTargetSizeTests.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+			F20000000000000000000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; MACOSX_DEPLOYMENT_TARGET = 13.0; SDKROOT = macosx; SWIFT_VERSION = 5.0; }; name = Debug; };
+			F20000000000000000000002 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; MACOSX_DEPLOYMENT_TARGET = 13.0; SDKROOT = macosx; SWIFT_VERSION = 5.0; }; name = Release; };
+		F20000000000000000000003 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = DropSqueeze/Resources/DropSqueeze.entitlements; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 1; ENABLE_TESTABILITY = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = DropSqueeze; INFOPLIST_KEY_LSUIElement = YES; INFOPLIST_KEY_NSPrincipalClass = NSApplication; MACOSX_DEPLOYMENT_TARGET = 13.0; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.dropsqueeze.app; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SUPPORTED_PLATFORMS = macosx; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; }; name = Debug; };
+			F20000000000000000000004 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = DropSqueeze/Resources/DropSqueeze.entitlements; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO; CODE_SIGN_STYLE = Manual; COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 2; ENABLE_HARDENED_RUNTIME = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = DropSqueeze; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities"; INFOPLIST_KEY_LSUIElement = YES; INFOPLIST_KEY_NSPrincipalClass = NSApplication; MACOSX_DEPLOYMENT_TARGET = 13.0; MARKETING_VERSION = 0.2.0; PRODUCT_BUNDLE_IDENTIFIER = com.dropsqueeze.app; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SUPPORTED_PLATFORMS = macosx; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; }; name = Release; };
+		F30000000000000000000002 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 14.0; PRODUCT_BUNDLE_IDENTIFIER = com.dropsqueeze.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SWIFT_VERSION = 5.0; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DropSqueeze.app/Contents/MacOS/DropSqueeze"; }; name = Debug; };
+		F30000000000000000000003 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 14.0; PRODUCT_BUNDLE_IDENTIFIER = com.dropsqueeze.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SWIFT_VERSION = 5.0; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DropSqueeze.app/Contents/MacOS/DropSqueeze"; }; name = Release; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		F10000000000000000000001 /* Build configuration list for PBXProject "DropSqueeze" */ = {isa = XCConfigurationList; buildConfigurations = (F20000000000000000000001 /* Debug */, F20000000000000000000002 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		F10000000000000000000002 /* Build configuration list for PBXNativeTarget "DropSqueeze" */ = {isa = XCConfigurationList; buildConfigurations = (F20000000000000000000003 /* Debug */, F20000000000000000000004 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		F30000000000000000000001 /* Build configuration list for PBXNativeTarget DropSqueezeTests */ = {isa = XCConfigurationList; buildConfigurations = (F30000000000000000000002 /* Debug */, F30000000000000000000003 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+/* End XCConfigurationList section */
+	};
+	rootObject = I10000000000000000000001 /* Project object */;
+}

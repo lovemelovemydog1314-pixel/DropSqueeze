@@ -266,11 +266,12 @@ struct SavedCompressionProfile: Codable, Identifiable, Equatable {
     var videoBitrateTarget: VideoBitrateTarget
     var videoFrameRate: VideoFrameRate
     var videoIncludesAudio: Bool
+    var videoMaximumSizeMB: Int?
 
     init(id: UUID = UUID(), name: String, imageResizePreset: ImageResizePreset, imageQuality: Double,
          imageFileOutputFormat: ImageFileOutputFormat, stripImageMetadata: Bool, videoOutputPreset: VideoOutputPreset,
          videoCodecPreference: VideoCodecPreference, videoBitrateTarget: VideoBitrateTarget,
-         videoFrameRate: VideoFrameRate, videoIncludesAudio: Bool) {
+         videoFrameRate: VideoFrameRate, videoIncludesAudio: Bool, videoMaximumSizeMB: Int? = nil) {
         self.id = id
         self.name = name
         self.imageResizePreset = imageResizePreset
@@ -282,6 +283,7 @@ struct SavedCompressionProfile: Codable, Identifiable, Equatable {
         self.videoBitrateTarget = videoBitrateTarget
         self.videoFrameRate = videoFrameRate
         self.videoIncludesAudio = videoIncludesAudio
+        self.videoMaximumSizeMB = videoMaximumSizeMB
     }
 }
 
@@ -301,6 +303,7 @@ final class RulesSettings: ObservableObject {
     @Published private(set) var videoBitrateTarget: VideoBitrateTarget
     @Published private(set) var videoFrameRate: VideoFrameRate
     @Published private(set) var videoIncludesAudio: Bool
+    @Published private(set) var videoMaximumSizeMB: Int?
     @Published private(set) var notificationsEnabled: Bool
     @Published private(set) var savedProfiles: [SavedCompressionProfile]
 
@@ -325,6 +328,8 @@ final class RulesSettings: ObservableObject {
         videoBitrateTarget = VideoBitrateTarget(rawValue: defaults.integer(forKey: "videoBitrateTarget")) ?? .automatic
         videoFrameRate = VideoFrameRate(rawValue: defaults.integer(forKey: "videoFrameRate")) ?? .original
         videoIncludesAudio = defaults.object(forKey: "videoIncludesAudio") as? Bool ?? true
+        let savedMaximumSizeMB = defaults.object(forKey: "videoMaximumSizeMB") as? Int
+        videoMaximumSizeMB = savedMaximumSizeMB.flatMap { (1...5_000).contains($0) ? $0 : nil }
         notificationsEnabled = defaults.object(forKey: "notificationsEnabled") as? Bool ?? true
         if let data = defaults.data(forKey: "savedCompressionProfiles"),
            let profiles = try? PropertyListDecoder().decode([SavedCompressionProfile].self, from: data) {
@@ -418,6 +423,16 @@ final class RulesSettings: ObservableObject {
         defaults.set(includesAudio, forKey: "videoIncludesAudio")
     }
 
+    func setVideoMaximumSizeMB(_ sizeMB: Int?) {
+        let validSizeMB = sizeMB.flatMap { (1...5_000).contains($0) ? $0 : nil }
+        videoMaximumSizeMB = validSizeMB
+        if let validSizeMB {
+            defaults.set(validSizeMB, forKey: "videoMaximumSizeMB")
+        } else {
+            defaults.removeObject(forKey: "videoMaximumSizeMB")
+        }
+    }
+
     func setImageResizePreset(_ preset: ImageResizePreset) {
         imageResizePreset = preset
         defaults.set(preset.rawValue, forKey: "imageResizePreset")
@@ -493,7 +508,8 @@ final class RulesSettings: ObservableObject {
             videoCodecPreference: videoCodecPreference,
             videoBitrateTarget: videoBitrateTarget,
             videoFrameRate: videoFrameRate,
-            videoIncludesAudio: videoIncludesAudio
+            videoIncludesAudio: videoIncludesAudio,
+            videoMaximumSizeMB: videoMaximumSizeMB
         )
         savedProfiles.append(profile)
         persistProfiles()
@@ -510,6 +526,7 @@ final class RulesSettings: ObservableObject {
         setVideoBitrateTarget(profile.videoBitrateTarget)
         setVideoFrameRate(profile.videoFrameRate)
         setVideoIncludesAudio(profile.videoIncludesAudio)
+        setVideoMaximumSizeMB(profile.videoMaximumSizeMB)
     }
 
     func deleteProfile(_ id: UUID) {

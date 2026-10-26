@@ -90,6 +90,29 @@ enum VideoOutputPreset: String, CaseIterable, Identifiable, Codable, Sendable, E
         case .standard720p, .high1080p: return nil
         }
     }
+
+    func exportAttempts(codec: VideoCodecPreference, needsSizeFallback: Bool) -> [String] {
+        let first = exportPresetName(codec: codec)
+        guard needsSizeFallback else { return [first] }
+        let candidates: [String]
+        if codec == .hevc {
+            candidates = [AVAssetExportPresetHEVC1920x1080, AVAssetExportPresetHEVCHighestQuality]
+        } else {
+            switch self {
+            case .high1080p:
+                candidates = [AVAssetExportPreset1280x720, AVAssetExportPreset640x480, AVAssetExportPresetLowQuality]
+            case .standard720p, .share25MB:
+                candidates = [AVAssetExportPreset640x480, AVAssetExportPresetLowQuality]
+            case .compact10MB:
+                candidates = [AVAssetExportPreset640x480, AVAssetExportPresetLowQuality]
+            }
+        }
+        var result: [String] = []
+        for name in [first] + candidates where !result.contains(name) {
+            result.append(name)
+        }
+        return result
+    }
 }
 
 final class ExportSessionBox: @unchecked Sendable {
@@ -160,10 +183,12 @@ enum VideoTranscoder {
         bitrateTarget: VideoBitrateTarget = .automatic,
         maximumFrameRate: VideoFrameRate = .original,
         includesAudio: Bool = true,
+        maximumSizeMB: Int? = nil,
         outputDirectory: URL? = nil,
         cancellation: VideoTranscoderCancellation? = nil,
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
+        let targetSizeMB = maximumSizeMB.flatMap { (1...5_000).contains($0) ? $0 : nil }
         let sourceAsset = AVURLAsset(url: inputURL)
         let asset: AVAsset
         do {
@@ -175,38 +200,16 @@ enum VideoTranscoder {
         } catch {
             throw VideoTranscodingError.exportFailed("无法保留视频轨道：\(error.localizedDescription)")
         }
-        let presetName = preset.exportPresetName(codec: codec)
-        let presetIsCompatible = await AVAssetExportSession.compatibility(
-            ofExportPreset: presetName,
-            with: asset,
-            outputFileType: .mp4
-        )
-        guard presetIsCompatible,
-              let session = AVAssetExportSession(asset: asset, presetName: presetName) else {
-            throw VideoTranscodingError.cannotCreateExport
-        }
-        guard session.supportedFileTypes.contains(.mp4) else {
-            throw VideoTranscodingError.exportFailed("此视频无法导出为 MP4")
-        }
-
         let fileManager = FileManager.default
         let directory = outputDirectory ?? inputURL.deletingLastPathComponent()
         let stem = inputURL.deletingPathExtension().lastPathComponent
         let outputURL = uniqueOutputURL(in: directory, stem: stem)
-        let temporaryURL = directory.appendingPathComponent(".dropsqueeze-\(UUID().uuidString).mp4")
-        defer { try? fileManager.removeItem(at: temporaryURL) }
-
-        session.outputURL = temporaryURL
-        session.outputFileType = .mp4
-        session.shouldOptimizeForNetworkUse = true
-        if maximumFrameRate != .original {
-            let composition = try await AVMutableVideoComposition.videoComposition(withPropertiesOf: asset)
-            composition.sourceTrackIDForFrameTiming = kCMPersistentTrackID_Invalid
-            composition.frameDuration = CMTime(value: 1, timescale: Int32(maximumFrameRate.rawValue))
-            session.videoComposition = composition
+        var fileLengthLimits = targetSizeMB == nil ? [preset.fileLengthLimit].compactMap { $0 } : []
+        if let targetSizeMB {
+            let maximumBytes = Int64(targetSizeMB) * 1_000_000
+            fileLengthLimits.append(maximumBytes)
         }
-        var fileLengthLimits = [preset.fileLengthLimit].compactMap { $0 }
-        if bitrateTarget != .automatic {
+        if bitrateTarget != .automatic, targetSizeMB == nil {
             let duration = try await asset.load(.duration)
             let seconds = CMTimeGetSeconds(duration)
             guard seconds.isFinite, seconds > 0 else { throw VideoTranscodingError.cannotCreateExport }
@@ -214,20 +217,89 @@ enum VideoTranscoder {
             guard desiredBytes < Double(Int64.max) else { throw VideoTranscodingError.cannotCreateExport }
             fileLengthLimits.append(Int64(desiredBytes.rounded(.down)))
         }
-        if let fileLengthLimit = fileLengthLimits.min() {
-            session.fileLengthLimit = fileLengthLimit
+        let maximumFileLength = fileLengthLimits.min()
+        let sourceSize = try fileManager.attributesOfItem(atPath: inputURL.path)[.size] as? NSNumber
+        guard let sourceSize else { throw VideoTranscodingError.cannotCreateExport }
+        let attemptNames = preset.exportAttempts(
+            codec: codec,
+            needsSizeFallback: maximumFileLength != nil
+        )
+        var lastExportError: Error?
+        var foundOutputWithinLimit = false
+
+        for (attemptIndex, presetName) in attemptNames.enumerated() {
+            guard cancellation?.isCancelled != true else { throw VideoTranscodingError.cancelled }
+            let isCompatible = await AVAssetExportSession.compatibility(
+                ofExportPreset: presetName,
+                with: asset,
+                outputFileType: .mp4
+            )
+            guard isCompatible,
+                  let session = AVAssetExportSession(asset: asset, presetName: presetName),
+                  session.supportedFileTypes.contains(.mp4) else { continue }
+
+            let temporaryURL = directory.appendingPathComponent(".dropsqueeze-\(UUID().uuidString).mp4")
+            defer { try? fileManager.removeItem(at: temporaryURL) }
+            session.outputURL = temporaryURL
+            session.outputFileType = .mp4
+            session.shouldOptimizeForNetworkUse = true
+            if maximumFrameRate != .original {
+                let composition = try await AVMutableVideoComposition.videoComposition(withPropertiesOf: asset)
+                composition.sourceTrackIDForFrameTiming = kCMPersistentTrackID_Invalid
+                composition.frameDuration = CMTime(value: 1, timescale: Int32(maximumFrameRate.rawValue))
+                session.videoComposition = composition
+            }
+            if let maximumFileLength { session.fileLengthLimit = maximumFileLength }
+
+            let sessionBox = ExportSessionBox(session)
+            cancellation?.attach(sessionBox)
+            defer { cancellation?.detach(sessionBox) }
+            do {
+                try await export(sessionBox, attemptIndex: attemptIndex, attemptCount: attemptNames.count, onProgress: onProgress)
+            } catch {
+                if case VideoTranscodingError.cancelled = error { throw error }
+                lastExportError = error
+                continue
+            }
+
+            guard let resultSize = try fileManager.attributesOfItem(atPath: temporaryURL.path)[.size] as? NSNumber else {
+                lastExportError = VideoTranscodingError.exportFailed("无法读取转码结果大小")
+                continue
+            }
+            if let maximumFileLength, resultSize.int64Value > maximumFileLength {
+                lastExportError = VideoTranscodingError.outputExceedsLimit
+                continue
+            }
+            foundOutputWithinLimit = true
+            guard resultSize.int64Value < sourceSize.int64Value else {
+                lastExportError = VideoTranscodingError.outputNotSmaller
+                continue
+            }
+            try fileManager.moveItem(at: temporaryURL, to: outputURL)
+            onProgress?(1)
+            return outputURL
         }
 
-        let sessionBox = ExportSessionBox(session)
-        cancellation?.attach(sessionBox)
-        defer { cancellation?.detach(sessionBox) }
-        guard cancellation?.isCancelled != true else { throw VideoTranscodingError.cancelled }
+        if foundOutputWithinLimit { throw VideoTranscodingError.outputNotSmaller }
+        if maximumFileLength != nil { throw VideoTranscodingError.outputExceedsLimit }
+        throw lastExportError ?? VideoTranscodingError.cannotCreateExport
+    }
 
+    private static func export(
+        _ sessionBox: ExportSessionBox,
+        attemptIndex: Int,
+        attemptCount: Int,
+        onProgress: (@Sendable (Double) -> Void)?
+    ) async throws {
+        let session = sessionBox.value
         let progressTask = Task.detached(priority: .utility) {
             while !Task.isCancelled {
                 let status = sessionBox.value.status
                 if status == .completed || status == .failed || status == .cancelled { break }
-                if status == .exporting { onProgress?(Double(sessionBox.value.progress)) }
+                if status == .exporting {
+                    let attemptProgress = Double(sessionBox.value.progress)
+                    onProgress?((Double(attemptIndex) + attemptProgress) / Double(attemptCount))
+                }
                 try? await Task.sleep(nanoseconds: 200_000_000)
             }
         }
@@ -251,27 +323,6 @@ enum VideoTranscoder {
         } catch {
             progressTask.cancel()
             await progressTask.value
-            throw error
-        }
-        onProgress?(1)
-
-        do {
-            let sourceSize = try fileManager.attributesOfItem(atPath: inputURL.path)[.size] as? NSNumber
-            let resultSize = try fileManager.attributesOfItem(atPath: temporaryURL.path)[.size] as? NSNumber
-            if let fileLengthLimit = fileLengthLimits.min(),
-               let resultSize,
-               resultSize.int64Value > fileLengthLimit {
-                try? fileManager.removeItem(at: temporaryURL)
-                throw VideoTranscodingError.outputExceedsLimit
-            }
-            guard let sourceSize, let resultSize, resultSize.int64Value < sourceSize.int64Value else {
-                try? fileManager.removeItem(at: temporaryURL)
-                throw VideoTranscodingError.outputNotSmaller
-            }
-            try fileManager.moveItem(at: temporaryURL, to: outputURL)
-            return outputURL
-        } catch {
-            try? fileManager.removeItem(at: temporaryURL)
             throw error
         }
     }

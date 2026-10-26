@@ -7,6 +7,7 @@ struct SettingsView: View {
     @ObservedObject var purchaseManager: PurchaseManager
     @State private var isShowingPrivacy = false
     @State private var newProfileName = ""
+    @State private var videoMaximumSizeText = ""
 
     var body: some View {
         ScrollView {
@@ -129,10 +130,45 @@ struct SettingsView: View {
                             get: { settings.videoIncludesAudio },
                             set: { settings.setVideoIncludesAudio($0) }
                         ))
+                        HStack {
+                            Text("自定义最大体积")
+                            TextField("留空使用预设", text: $videoMaximumSizeText)
+                                .frame(width: 108)
+                                .onAppear {
+                                    videoMaximumSizeText = settings.videoMaximumSizeMB.map(String.init) ?? ""
+                                }
+                                .onChange(of: videoMaximumSizeText) { value in
+                                    let digits = String(value.filter(\.isNumber).prefix(4))
+                                    if digits != value {
+                                        videoMaximumSizeText = digits
+                                        return
+                                    }
+                                    guard let requestedSize = Int(digits) else {
+                                        settings.setVideoMaximumSizeMB(nil)
+                                        return
+                                    }
+                                    let boundedSize = min(requestedSize, 5_000)
+                                    if boundedSize != requestedSize {
+                                        videoMaximumSizeText = String(boundedSize)
+                                    }
+                                    settings.setVideoMaximumSizeMB(boundedSize)
+                                }
+                                .onChange(of: settings.videoMaximumSizeMB) { value in
+                                    let storedValue = value.map(String.init) ?? ""
+                                    if storedValue != videoMaximumSizeText {
+                                        videoMaximumSizeText = storedValue
+                                    }
+                                }
+                            Text("MB")
+                                .foregroundStyle(.secondary)
+                        }
                         Text(settings.videoOutputPreset.detail)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text("H.264 兼容性更广；HEVC 通常更省空间。码率目标按视频时长换算为文件大小上限；可设置最高帧率或移除音轨。编码器无法达到上限时会保留原文件。")
+                        Text("自定义体积为 1–5000 MB；填写后会替代预设中的 10/25 MB 上限，输出分辨率仍按当前预设执行。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("H.264 兼容性更广；HEVC 通常更省空间。设置自定义上限后会从原件尝试更低输出档位，并检查实际大小。可设置最高帧率或移除音轨；仍无法达标时会保留原文件并说明原因。")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
