@@ -153,6 +153,61 @@ final class VideoTargetSizeTests: XCTestCase {
         )
     }
 
+    func testFolderRulesKeepLegacyDefaultsAndResolveIndependentProfiles() throws {
+        let legacyRule = FolderWatchRule(
+            scope: .videos,
+            includeSubfolders: true,
+            filenameContains: "recording",
+            maximumFileSizeMB: 80,
+            outputNameTemplate: "{name}-{date}"
+        )
+        let legacyEncoded = try PropertyListEncoder().encode(legacyRule)
+        var legacyDictionary = try XCTUnwrap(
+            PropertyListSerialization.propertyList(from: legacyEncoded, format: nil) as? [String: Any]
+        )
+        legacyDictionary.removeValue(forKey: "compressionProfileIdentifier")
+        let legacyData = try PropertyListSerialization.data(fromPropertyList: legacyDictionary, format: .binary, options: 0)
+        let migratedRule = try PropertyListDecoder().decode(FolderWatchRule.self, from: legacyData)
+        XCTAssertTrue(migratedRule.usesCurrentCompressionProfile)
+        XCTAssertEqual(migratedRule.scope, .videos)
+        XCTAssertTrue(migratedRule.includeSubfolders)
+        XCTAssertEqual(migratedRule.maximumFileSizeMB, 80)
+
+        let savedProfile = SavedCompressionProfile(
+            name: "窄带视频",
+            imageResizePreset: .max1920,
+            imageQuality: 0.75,
+            imageFileOutputFormat: .jpeg,
+            stripImageMetadata: true,
+            videoOutputPreset: .compact10MB,
+            videoCodecPreference: .h264,
+            videoBitrateTarget: .economy,
+            videoFrameRate: .fps30,
+            videoIncludesAudio: true,
+            videoMaximumSizeMB: 8
+        )
+        let profiles = [savedProfile]
+        let videoFolderRule = FolderWatchRule(
+            scope: .videos,
+            compressionProfileIdentifier: CompressionProfileReference.identifier(for: savedProfile)
+        )
+        let imageFolderRule = FolderWatchRule(
+            scope: .images,
+            compressionProfileIdentifier: CompressionProfileReference.identifier(for: .webPublishing)
+        )
+
+        XCTAssertFalse(videoFolderRule.usesCurrentCompressionProfile)
+        XCTAssertEqual(videoFolderRule.resolvedCompressionProfile(savedProfiles: profiles)?.videoMaximumSizeMB, 8)
+        XCTAssertEqual(imageFolderRule.resolvedCompressionProfile(savedProfiles: profiles)?.imageFileOutputFormat, .webP)
+        XCTAssertNil(videoFolderRule.resolvedCompressionProfile(savedProfiles: []), "Deleted profiles must not silently select another profile.")
+
+        let roundTrip = try PropertyListDecoder().decode(
+            FolderWatchRule.self,
+            from: PropertyListEncoder().encode(videoFolderRule)
+        )
+        XCTAssertEqual(roundTrip, videoFolderRule)
+    }
+
     @MainActor
     func testScenarioPresetsCoverEmailWebAndArchiveUseCases() {
         let suiteName = "DropSqueezeTests.scenarios.\(UUID().uuidString)"

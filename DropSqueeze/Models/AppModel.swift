@@ -1130,6 +1130,18 @@ final class AppModel: ObservableObject {
             requestPro(for: .feature(.fileWebPOutput))
             return nil
         }
+        if isImage, profileOverride?.retinaDownscaleEnabled == true, !purchaseManager.isPro {
+            if reportStatus { statusMessage = "Retina 缩放配置需要 DropSqueeze Pro" }
+            requestPro(for: .feature(.retinaDownscale))
+            return nil
+        }
+        if ext == "mov",
+           profileOverride?.gifConversionEnabled == true,
+           !purchaseManager.isPro {
+            if reportStatus { statusMessage = "MOV 转 GIF 配置需要 DropSqueeze Pro" }
+            requestPro(for: .feature(.gifConversion))
+            return nil
+        }
 
         let processingPath = url.standardizedFileURL.path
         guard processingFilePaths.insert(processingPath).inserted else { return nil }
@@ -1391,13 +1403,19 @@ final class AppModel: ObservableObject {
 
         let watcher = DirectoryWatcher(directoryURL: url, rule: folder.rule) { [weak self] urls in
             guard let self else { return }
+            let profile = folder.rule.resolvedCompressionProfile(savedProfiles: self.settings.savedProfiles)
+            if !folder.rule.usesCurrentCompressionProfile, profile == nil {
+                self.statusMessage = "监控文件夹配置已删除，请为 \(url.lastPathComponent) 选择其他配置"
+                return
+            }
             for candidate in urls where self.generatedOutputPaths[candidate.standardizedFileURL.path] == nil {
                 Task {
                     await self.processFile(
                         candidate,
                         source: .automatic,
                         securityScopeURL: url,
-                        outputNameTemplate: folder.rule.outputNameTemplate
+                        outputNameTemplate: folder.rule.outputNameTemplate,
+                        profileOverride: profile
                     )
                 }
             }

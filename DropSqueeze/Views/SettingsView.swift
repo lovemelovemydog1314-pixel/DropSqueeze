@@ -414,6 +414,25 @@ private struct FolderRuleEditor: View {
     var body: some View {
         DisclosureGroup("监控规则 · \(folder.rule.scope.title)") {
             VStack(alignment: .leading, spacing: 8) {
+                Picker("压缩配置", selection: $rule.compressionProfileIdentifier) {
+                    if !rule.usesCurrentCompressionProfile,
+                       rule.resolvedCompressionProfile(savedProfiles: model.settings.savedProfiles) == nil {
+                        Text("已删除的配置").tag(rule.compressionProfileIdentifier)
+                    }
+                    Text("使用当前设置").tag(CompressionProfileReference.currentIdentifier)
+                    ForEach(CompressionScenario.allCases) { scenario in
+                        let identifier = CompressionProfileReference.identifier(for: scenario)
+                        Text(scenario.requiredProFeature == nil ? scenario.title : "\(scenario.title) · Pro")
+                            .tag(identifier)
+                    }
+                    if !model.settings.savedProfiles.isEmpty {
+                        Divider()
+                        ForEach(model.settings.savedProfiles) { profile in
+                            Text(profile.name)
+                                .tag(CompressionProfileReference.identifier(for: profile))
+                        }
+                    }
+                }
                 Picker("处理文件", selection: $rule.scope) {
                     ForEach(FolderWatchScope.allCases) { scope in
                         Text(scope.title).tag(scope)

@@ -53,6 +53,51 @@ struct FolderWatchRule: Codable, Equatable {
     var filenameContains = ""
     var maximumFileSizeMB: Int?
     var outputNameTemplate = "{name}-compressed"
+    var compressionProfileIdentifier = CompressionProfileReference.currentIdentifier
+
+    private enum CodingKeys: String, CodingKey {
+        case scope
+        case includeSubfolders
+        case filenameContains
+        case maximumFileSizeMB
+        case outputNameTemplate
+        case compressionProfileIdentifier
+    }
+
+    init(
+        scope: FolderWatchScope = .screenshotsAndRecordings,
+        includeSubfolders: Bool = false,
+        filenameContains: String = "",
+        maximumFileSizeMB: Int? = nil,
+        outputNameTemplate: String = "{name}-compressed",
+        compressionProfileIdentifier: String = CompressionProfileReference.currentIdentifier
+    ) {
+        self.scope = scope
+        self.includeSubfolders = includeSubfolders
+        self.filenameContains = filenameContains
+        self.maximumFileSizeMB = maximumFileSizeMB
+        self.outputNameTemplate = outputNameTemplate
+        self.compressionProfileIdentifier = compressionProfileIdentifier
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        scope = try container.decodeIfPresent(FolderWatchScope.self, forKey: .scope) ?? .screenshotsAndRecordings
+        includeSubfolders = try container.decodeIfPresent(Bool.self, forKey: .includeSubfolders) ?? false
+        filenameContains = try container.decodeIfPresent(String.self, forKey: .filenameContains) ?? ""
+        maximumFileSizeMB = try container.decodeIfPresent(Int.self, forKey: .maximumFileSizeMB)
+        outputNameTemplate = try container.decodeIfPresent(String.self, forKey: .outputNameTemplate) ?? "{name}-compressed"
+        compressionProfileIdentifier = try container.decodeIfPresent(String.self, forKey: .compressionProfileIdentifier)
+            ?? CompressionProfileReference.currentIdentifier
+    }
+
+    func resolvedCompressionProfile(savedProfiles: [SavedCompressionProfile]) -> SavedCompressionProfile? {
+        CompressionProfileReference.resolve(compressionProfileIdentifier, savedProfiles: savedProfiles)
+    }
+
+    var usesCurrentCompressionProfile: Bool {
+        CompressionProfileReference.isCurrent(compressionProfileIdentifier)
+    }
 
     func accepts(_ url: URL, size: Int64) -> Bool {
         let ext = url.pathExtension.lowercased()
