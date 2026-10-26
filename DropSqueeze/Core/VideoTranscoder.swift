@@ -1,7 +1,49 @@
 import AVFoundation
 import Foundation
 
-enum VideoOutputPreset: String, CaseIterable, Identifiable, Codable, Sendable {
+enum VideoCodecPreference: String, CaseIterable, Identifiable, Codable, Sendable, Equatable {
+    case automatic
+    case h264
+    case hevc
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .automatic: return "自动"
+        case .h264: return "H.264 · 兼容性优先"
+        case .hevc: return "HEVC · 体积优先"
+        }
+    }
+}
+
+enum VideoFrameRate: Int, CaseIterable, Identifiable, Codable, Sendable, Equatable {
+    case original = 0
+    case fps24 = 24
+    case fps30 = 30
+    case fps60 = 60
+
+    var id: Int { rawValue }
+    var title: String { rawValue == 0 ? "保持原帧率" : "最高 \(rawValue) fps" }
+}
+
+enum VideoBitrateTarget: Int, CaseIterable, Identifiable, Codable, Sendable, Equatable {
+    case automatic = 0
+    case economy = 1_500
+    case balanced = 3_500
+    case highQuality = 8_000
+
+    var id: Int { rawValue }
+    var title: String {
+        switch self {
+        case .automatic: return "自动"
+        case .economy: return "轻量 · 1.5 Mbps"
+        case .balanced: return "均衡 · 3.5 Mbps"
+        case .highQuality: return "清晰 · 8 Mbps"
+        }
+    }
+}
+
+enum VideoOutputPreset: String, CaseIterable, Identifiable, Codable, Sendable, Equatable {
     case compact10MB
     case share25MB
     case standard720p
@@ -27,7 +69,13 @@ enum VideoOutputPreset: String, CaseIterable, Identifiable, Codable, Sendable {
         }
     }
 
-    fileprivate var exportPresetName: String {
+    fileprivate func exportPresetName(codec: VideoCodecPreference) -> String {
+        if codec == .hevc {
+            switch self {
+            case .compact10MB, .share25MB: return AVAssetExportPresetHEVCHighestQuality
+            case .standard720p, .high1080p: return AVAssetExportPresetHEVC1920x1080
+            }
+        }
         switch self {
         case .compact10MB: return AVAssetExportPreset640x480
         case .share25MB, .standard720p: return AVAssetExportPreset1280x720
@@ -108,12 +156,33 @@ enum VideoTranscoder {
     static func transcodeToSmallerMP4(
         _ inputURL: URL,
         preset: VideoOutputPreset = .standard720p,
+        codec: VideoCodecPreference = .automatic,
+        bitrateTarget: VideoBitrateTarget = .automatic,
+        maximumFrameRate: VideoFrameRate = .original,
+        includesAudio: Bool = true,
         outputDirectory: URL? = nil,
         cancellation: VideoTranscoderCancellation? = nil,
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
-        let asset = AVURLAsset(url: inputURL)
-        guard let session = AVAssetExportSession(asset: asset, presetName: preset.exportPresetName) else {
+        let sourceAsset = AVURLAsset(url: inputURL)
+        let asset: AVAsset
+        do {
+            if includesAudio {
+                asset = sourceAsset
+            } else {
+                asset = try await videoOnlyComposition(from: sourceAsset)
+            }
+        } catch {
+            throw VideoTranscodingError.exportFailed("无法保留视频轨道：\(error.localizedDescription)")
+        }
+        let presetName = preset.exportPresetName(codec: codec)
+        let presetIsCompatible = await AVAssetExportSession.compatibility(
+            ofExportPreset: presetName,
+            with: asset,
+            outputFileType: .mp4
+        )
+        guard presetIsCompatible,
+              let session = AVAssetExportSession(asset: asset, presetName: presetName) else {
             throw VideoTranscodingError.cannotCreateExport
         }
         guard session.supportedFileTypes.contains(.mp4) else {
@@ -130,7 +199,22 @@ enum VideoTranscoder {
         session.outputURL = temporaryURL
         session.outputFileType = .mp4
         session.shouldOptimizeForNetworkUse = true
-        if let fileLengthLimit = preset.fileLengthLimit {
+        if maximumFrameRate != .original {
+            let composition = try await AVMutableVideoComposition.videoComposition(withPropertiesOf: asset)
+            composition.sourceTrackIDForFrameTiming = kCMPersistentTrackID_Invalid
+            composition.frameDuration = CMTime(value: 1, timescale: Int32(maximumFrameRate.rawValue))
+            session.videoComposition = composition
+        }
+        var fileLengthLimits = [preset.fileLengthLimit].compactMap { $0 }
+        if bitrateTarget != .automatic {
+            let duration = try await asset.load(.duration)
+            let seconds = CMTimeGetSeconds(duration)
+            guard seconds.isFinite, seconds > 0 else { throw VideoTranscodingError.cannotCreateExport }
+            let desiredBytes = Double(bitrateTarget.rawValue) * 1_000 * seconds / 8
+            guard desiredBytes < Double(Int64.max) else { throw VideoTranscodingError.cannotCreateExport }
+            fileLengthLimits.append(Int64(desiredBytes.rounded(.down)))
+        }
+        if let fileLengthLimit = fileLengthLimits.min() {
             session.fileLengthLimit = fileLengthLimit
         }
 
@@ -174,7 +258,7 @@ enum VideoTranscoder {
         do {
             let sourceSize = try fileManager.attributesOfItem(atPath: inputURL.path)[.size] as? NSNumber
             let resultSize = try fileManager.attributesOfItem(atPath: temporaryURL.path)[.size] as? NSNumber
-            if let fileLengthLimit = preset.fileLengthLimit,
+            if let fileLengthLimit = fileLengthLimits.min(),
                let resultSize,
                resultSize.int64Value > fileLengthLimit {
                 try? fileManager.removeItem(at: temporaryURL)
@@ -190,6 +274,23 @@ enum VideoTranscoder {
             try? fileManager.removeItem(at: temporaryURL)
             throw error
         }
+    }
+
+    private static func videoOnlyComposition(from asset: AVAsset) async throws -> AVAsset {
+        let composition = AVMutableComposition()
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        guard !videoTracks.isEmpty else { throw VideoTranscodingError.cannotCreateExport }
+        for sourceTrack in videoTracks {
+            let sourceTimeRange = try await sourceTrack.load(.timeRange)
+            let preferredTransform = try await sourceTrack.load(.preferredTransform)
+            guard let destinationTrack = composition.addMutableTrack(
+                withMediaType: .video,
+                preferredTrackID: kCMPersistentTrackID_Invalid
+            ) else { throw VideoTranscodingError.cannotCreateExport }
+            try destinationTrack.insertTimeRange(sourceTimeRange, of: sourceTrack, at: sourceTimeRange.start)
+            destinationTrack.preferredTransform = preferredTransform
+        }
+        return composition
     }
 
     private static func uniqueOutputURL(in directory: URL, stem: String) -> URL {

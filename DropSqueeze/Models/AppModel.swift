@@ -77,8 +77,41 @@ private struct FileCompressionOutcome {
 }
 
 private struct ManualQueueItem {
+    let id: UUID
     let batchID: UUID
     let url: URL
+    let securityScopeURL: URL
+}
+
+enum CompressionQueueState: String, Identifiable {
+    case queued
+    case processing
+    case completed
+    case skipped
+    case cancelled
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .queued: return "排队中"
+        case .processing: return "处理中"
+        case .completed: return "完成"
+        case .skipped: return "跳过"
+        case .cancelled: return "已取消"
+        }
+    }
+}
+
+struct CompressionQueueJob: Identifiable {
+    let id: UUID
+    let url: URL
+    let securityScopeURL: URL
+    var state: CompressionQueueState
+    var progress: Double?
+    var detail: String?
+    var startedAt: Date?
+    var finishedAt: Date?
 }
 
 private struct ManualQueueBatch {
@@ -134,6 +167,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var currentProgress: Double?
     @Published private(set) var queuedFileCount = 0
     @Published private(set) var isManualQueueRunning = false
+    @Published private(set) var isManualQueuePaused = false
+    @Published private(set) var queueJobs: [CompressionQueueJob] = []
+    @Published private(set) var estimatedQueueRemainingSeconds: TimeInterval?
     @Published private(set) var isProcessing = false
     @Published private(set) var canUndoClipboardCompression = false
     @Published private(set) var isDropZoneVisible = true
@@ -176,7 +212,9 @@ final class AppModel: ObservableObject {
     private var pendingClipboardPayloads: [ClipboardPayload] = []
     private var manualFileQueue: [ManualQueueItem] = []
     private var manualQueueBatches: [UUID: ManualQueueBatch] = [:]
+    private var completedQueueDurations: [TimeInterval] = []
     private var processingFilePaths: Set<String> = []
+    private var generatedOutputPaths: [String: Date] = [:]
     private var activeVideoCancellation: VideoTranscoderCancellation?
     private var activeFileSource: FileSource?
     private var activeProgressID: UUID?
@@ -244,7 +282,7 @@ final class AppModel: ObservableObject {
             defaults.removeObject(forKey: legacyBookmarkKey)
             persistFolderBookmarks()
         }
-        monitoredFolders = folderBookmarks.map { MonitoredFolder(id: $0.id, path: $0.path) }
+        monitoredFolders = folderBookmarks.map { MonitoredFolder(id: $0.id, path: $0.path, rule: $0.rule) }
 
         purchaseManager.onEntitlementChanged = { [weak self] isPro in
             self?.handleEntitlementChange(isPro: isPro)
@@ -294,6 +332,24 @@ final class AppModel: ObservableObject {
     func setVideoOutputPreset(_ preset: VideoOutputPreset) {
         settings.setVideoOutputPreset(preset)
         statusMessage = "视频输出预设已设为：\(preset.title)"
+    }
+
+    func applyCompressionScenario(_ scenario: CompressionScenario) {
+        settings.applyScenario(scenario)
+        statusMessage = "已应用预设：\(scenario.title)"
+    }
+
+    func applySavedProfile(_ profile: SavedCompressionProfile) {
+        if profile.imageFileOutputFormat == .webP, !purchaseManager.isPro {
+            requestPro(for: .feature(.fileWebPOutput))
+            return
+        }
+        if let type = profile.imageFileOutputFormat.typeIdentifier, !ImageCompressor.encodingAvailable(for: type) {
+            statusMessage = "当前 macOS 无法编码为此预设的图片格式"
+            return
+        }
+        settings.apply(profile)
+        statusMessage = "已应用配置：\(profile.name)"
     }
 
     func setImageFileOutputFormat(_ format: ImageFileOutputFormat) {
@@ -420,15 +476,23 @@ final class AppModel: ObservableObject {
         statusMessage = "已移除文件夹：\(folder.displayName)"
     }
 
+    func updateFolderRule(_ id: UUID, rule: FolderWatchRule) {
+        guard let index = folderBookmarks.firstIndex(where: { $0.id == id }), folderBookmarks[index].rule != rule else { return }
+        folderBookmarks[index].rule = rule
+        persistFolderBookmarks()
+        if let url = scopedFolderURLs[id] {
+            stopFolderWatcher(id: id)
+            installFolderWatcher(for: folderBookmarks[index], url: url)
+        }
+        statusMessage = "监控规则已更新"
+    }
+
     func stopWatchingFolder() {
         setFolderMonitoringEnabled(false)
     }
 
     func processDroppedURLs(_ urls: [URL]) {
-        var seenPaths = Set<String>()
-        let validURLs = urls.filter { url in
-            url.isFileURL && seenPaths.insert(url.standardizedFileURL.path).inserted
-        }
+        let validURLs = expandDroppedFiles(urls)
         guard !validURLs.isEmpty else { return }
         guard validURLs.count == 1 || purchaseManager.isPro else {
             statusMessage = "批量压缩需要 DropSqueeze Pro"
@@ -439,34 +503,230 @@ final class AppModel: ObservableObject {
         dropAcceptedHandler?()
         let batchID = UUID()
         manualQueueBatches[batchID] = ManualQueueBatch(remainingCount: validURLs.count)
-        manualFileQueue.append(contentsOf: validURLs.map { ManualQueueItem(batchID: batchID, url: $0) })
+        let queueItems = validURLs.map { file in
+            let id = UUID()
+            queueJobs.append(CompressionQueueJob(
+                id: id,
+                url: file.url,
+                securityScopeURL: file.securityScopeURL,
+                state: .queued
+            ))
+            return ManualQueueItem(id: id, batchID: batchID, url: file.url, securityScopeURL: file.securityScopeURL)
+        }
+        manualFileQueue.append(contentsOf: queueItems)
+        trimQueueHistory()
         queuedFileCount = manualFileQueue.count
         guard !isManualQueueRunning else { return }
+        isManualQueuePaused = false
         isManualQueueRunning = true
         Task { await drainManualQueue() }
     }
 
+    func pauseManualQueue() {
+        guard isManualQueueRunning else { return }
+        isManualQueuePaused = true
+        statusMessage = "队列已暂停"
+    }
+
+    func resumeManualQueue() {
+        guard isManualQueueRunning else { return }
+        isManualQueuePaused = false
+        statusMessage = "继续处理队列"
+    }
+
+    func removeQueuedJob(_ id: UUID) {
+        guard let index = manualFileQueue.firstIndex(where: { $0.id == id }) else { return }
+        let item = manualFileQueue.remove(at: index)
+        updateQueueJob(id) {
+            $0.state = .cancelled
+            $0.finishedAt = Date()
+            $0.detail = "已从队列移除"
+        }
+        queuedFileCount = manualFileQueue.count
+        completeManualQueueItem(item, outcome: nil)
+        updateQueueEstimate()
+    }
+
+    func retryQueueJob(_ id: UUID) {
+        guard let job = queueJobs.first(where: { $0.id == id }),
+              job.state == .skipped || job.state == .cancelled,
+              !manualFileQueue.contains(where: { $0.id == id }) else { return }
+        let batchID = UUID()
+        manualQueueBatches[batchID] = ManualQueueBatch(remainingCount: 1)
+        manualFileQueue.append(ManualQueueItem(
+            id: job.id,
+            batchID: batchID,
+            url: job.url,
+            securityScopeURL: job.securityScopeURL
+        ))
+        updateQueueJob(id) {
+            $0.state = .queued
+            $0.progress = nil
+            $0.detail = "等待重试"
+            $0.startedAt = nil
+            $0.finishedAt = nil
+        }
+        queuedFileCount = manualFileQueue.count
+        if !isManualQueueRunning {
+            isManualQueuePaused = false
+            isManualQueueRunning = true
+            Task { await drainManualQueue() }
+        }
+        updateQueueEstimate()
+    }
+
     func stopManualQueue() {
         guard isManualQueueRunning else { return }
+        isManualQueuePaused = false
         let pendingItems = manualFileQueue
         manualFileQueue.removeAll()
         queuedFileCount = 0
         for item in pendingItems {
+            updateQueueJob(item.id) {
+                $0.state = .cancelled
+                $0.finishedAt = Date()
+                $0.detail = "剩余任务已停止"
+            }
             completeManualQueueItem(item, outcome: nil)
         }
+        isManualQueuePaused = false
         if activeFileSource == .manualDrop { activeVideoCancellation?.cancel() }
         statusMessage = "已停止剩余压缩任务"
+        updateQueueEstimate()
     }
 
     private func drainManualQueue() async {
-        while !manualFileQueue.isEmpty {
+        while true {
+            guard !manualFileQueue.isEmpty else { break }
+            while isManualQueuePaused && !manualFileQueue.isEmpty {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+            guard !manualFileQueue.isEmpty else { break }
             let item = manualFileQueue.removeFirst()
             queuedFileCount = manualFileQueue.count
-            let outcome = await processFile(item.url, source: .manualDrop, notifyOnSuccess: false)
+            updateQueueJob(item.id) {
+                $0.state = .processing
+                $0.startedAt = Date()
+                $0.progress = nil
+                $0.detail = nil
+            }
+            updateQueueEstimate()
+            let startedAt = Date()
+            statusMessage = "正在压缩：\(item.url.lastPathComponent)"
+            let outcome = await processFile(
+                item.url,
+                source: .manualDrop,
+                notifyOnSuccess: false,
+                securityScopeURL: item.securityScopeURL,
+                onProgress: { [weak self] progress in
+                    Task { @MainActor [weak self] in self?.updateQueueProgress(item.id, progress: progress) }
+                }
+            )
+            let cancelled = statusMessage.hasPrefix("已取消：")
+            updateQueueJob(item.id) {
+                $0.state = outcome != nil ? .completed : (cancelled ? .cancelled : .skipped)
+                $0.finishedAt = Date()
+                $0.progress = outcome == nil ? nil : 1
+                $0.detail = outcome.map { "节省 \(formattedSize($0.originalBytes - $0.resultBytes))" }
+                    ?? (cancelled ? "已取消" : statusMessage)
+            }
+            completedQueueDurations.append(Date().timeIntervalSince(startedAt))
+            completedQueueDurations = Array(completedQueueDurations.suffix(20))
             completeManualQueueItem(item, outcome: outcome)
+            trimQueueHistory()
+            updateQueueEstimate()
         }
         isManualQueueRunning = false
+        isManualQueuePaused = false
+        estimatedQueueRemainingSeconds = nil
         if currentFileName == nil { currentProgress = nil }
+    }
+
+    private struct DroppedMediaFile {
+        let url: URL
+        let securityScopeURL: URL
+    }
+
+    private func expandDroppedFiles(_ urls: [URL]) -> [DroppedMediaFile] {
+        var results: [DroppedMediaFile] = []
+        var seenPaths = Set<String>()
+        let maximumFiles = 2_000
+
+        for url in urls where url.isFileURL {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { continue }
+            if isDirectory.boolValue {
+                let startedAccess = url.startAccessingSecurityScopedResource()
+                if let enumerator = FileManager.default.enumerator(
+                    at: url,
+                    includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
+                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                ) {
+                    for case let fileURL as URL in enumerator {
+                        if results.count >= maximumFiles { break }
+                        guard isSupportedDroppedFile(fileURL),
+                              seenPaths.insert(fileURL.standardizedFileURL.path).inserted else { continue }
+                        results.append(DroppedMediaFile(url: fileURL, securityScopeURL: url))
+                    }
+                }
+                if startedAccess { url.stopAccessingSecurityScopedResource() }
+            } else if isSupportedDroppedFile(url), seenPaths.insert(url.standardizedFileURL.path).inserted {
+                results.append(DroppedMediaFile(url: url, securityScopeURL: url))
+            }
+            if results.count >= maximumFiles { break }
+        }
+
+        if results.count == maximumFiles {
+            statusMessage = "已加入前 \(maximumFiles) 个支持的文件；超出部分未加入队列"
+        } else if results.isEmpty {
+            statusMessage = "没有找到支持的图片、视频或 PDF 文件"
+        }
+        return results
+    }
+
+    private func isSupportedDroppedFile(_ url: URL) -> Bool {
+        let extensionName = url.pathExtension.lowercased()
+        return ImageCompressor.typeIdentifier(forFileExtension: extensionName) != nil
+            || ImageCompressor.detectedTypeIdentifier(at: url) != nil
+            || ["mov", "mp4", "m4v", "pdf"].contains(extensionName)
+    }
+
+    private func updateQueueJob(_ id: UUID, update: (inout CompressionQueueJob) -> Void) {
+        guard let index = queueJobs.firstIndex(where: { $0.id == id }) else { return }
+        update(&queueJobs[index])
+    }
+
+    private func updateQueueProgress(_ id: UUID, progress: Double) {
+        updateQueueJob(id) { $0.progress = min(1, max(0, progress)) }
+        updateQueueEstimate()
+    }
+
+    private func updateQueueEstimate() {
+        guard isManualQueueRunning else {
+            estimatedQueueRemainingSeconds = nil
+            return
+        }
+        let averageDuration = completedQueueDurations.isEmpty
+            ? 45.0
+            : completedQueueDurations.reduce(0, +) / Double(completedQueueDurations.count)
+        let active = queueJobs.first(where: { $0.state == .processing })
+        let activeRemaining: TimeInterval
+        if let active, let startedAt = active.startedAt, let progress = active.progress, progress > 0.02 {
+            activeRemaining = max(0, Date().timeIntervalSince(startedAt) * (1 - progress) / progress)
+        } else if active != nil {
+            activeRemaining = averageDuration
+        } else {
+            activeRemaining = 0
+        }
+        estimatedQueueRemainingSeconds = activeRemaining + averageDuration * Double(queuedFileCount)
+    }
+
+    private func trimQueueHistory() {
+        guard queueJobs.count > 80 else { return }
+        let pendingIDs = Set(manualFileQueue.map(\.id))
+        let active = queueJobs.filter { $0.state == .processing || pendingIDs.contains($0.id) }
+        let completed = queueJobs.filter { $0.state != .processing && !pendingIDs.contains($0.id) }
+        queueJobs = Array(completed.suffix(40)) + active
     }
 
     private func completeManualQueueItem(_ item: ManualQueueItem, outcome: FileCompressionOutcome?) {
@@ -778,11 +1038,15 @@ final class AppModel: ObservableObject {
         source: FileSource,
         reportStatus: Bool = true,
         notifyOnSuccess: Bool = true,
-        videoPresetOverride: VideoOutputPreset? = nil
+        videoPresetOverride: VideoOutputPreset? = nil,
+        securityScopeURL: URL? = nil,
+        outputNameTemplate: String? = nil,
+        onProgress: (@Sendable (Double) -> Void)? = nil
     ) async -> FileCompressionOutcome? {
         guard url.isFileURL else { return nil }
         let ext = url.pathExtension.lowercased()
-        let isImage = ImageCompressor.typeIdentifier(forFileExtension: ext) != nil
+        let detectedImageType = ImageCompressor.detectedTypeIdentifier(at: url)
+        let isImage = detectedImageType != nil || ImageCompressor.typeIdentifier(forFileExtension: ext) != nil
         let isVideo = ext == "mov" || ext == "mp4" || ext == "m4v"
         let isPDF = ext == "pdf"
         guard isImage || isVideo || isPDF else {
@@ -830,8 +1094,9 @@ final class AppModel: ObservableObject {
             if let reservation { usageTracker.complete(reservation, succeeded: succeeded) }
         }
 
-        let startedAccess = url.startAccessingSecurityScopedResource()
-        defer { if startedAccess { url.stopAccessingSecurityScopedResource() } }
+        let scopedSourceURL = securityScopeURL ?? url
+        let startedAccess = scopedSourceURL.startAccessingSecurityScopedResource()
+        defer { if startedAccess { scopedSourceURL.stopAccessingSecurityScopedResource() } }
         let scopedOutputFolder = outputFolderURL
         let outputDirectory = scopedOutputFolder ?? url.deletingLastPathComponent()
         let startedOutputAccess = scopedOutputFolder?.startAccessingSecurityScopedResource() ?? false
@@ -869,7 +1134,7 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            let outputURL: URL
+            var outputURL: URL
             let originalSize: Int64
             let resultSize: Int64
             var didConvertImageFormat = false
@@ -909,18 +1174,27 @@ final class AppModel: ObservableObject {
                     outputURL = try await VideoTranscoder.transcodeToSmallerMP4(
                         url,
                         preset: videoPresetOverride ?? settings.videoOutputPreset,
+                        codec: settings.videoCodecPreference,
+                        bitrateTarget: settings.videoBitrateTarget,
+                        maximumFrameRate: settings.videoFrameRate,
+                        includesAudio: settings.videoIncludesAudio,
                         outputDirectory: outputDirectory,
                         cancellation: videoCancellation,
                         onProgress: { [weak self] progress in
                             Task { @MainActor [weak self] in
                                 guard let self, self.activeProgressID == progressID else { return }
                                 self.currentProgress = progress
+                                onProgress?(progress)
                             }
                         }
                     )
                 }
                 originalSize = Self.fileSize(at: url)
                 resultSize = Self.fileSize(at: outputURL)
+            }
+
+            if let outputNameTemplate {
+                outputURL = try applyOutputNameTemplate(outputNameTemplate, to: outputURL, sourceURL: url)
             }
 
             record(HistoryItem(
@@ -931,6 +1205,8 @@ final class AppModel: ObservableObject {
                 sourceURL: url,
                 outputURL: outputURL
             ))
+            generatedOutputPaths[outputURL.standardizedFileURL.path] = Date()
+            generatedOutputPaths = generatedOutputPaths.filter { Date().timeIntervalSince($0.value) < 86_400 }
             succeeded = true
             if reportStatus {
                 if didConvertImageFormat {
@@ -1030,10 +1306,17 @@ final class AppModel: ObservableObject {
             return
         }
 
-        let watcher = DirectoryWatcher(directoryURL: url) { [weak self] urls in
+        let watcher = DirectoryWatcher(directoryURL: url, rule: folder.rule) { [weak self] urls in
             guard let self else { return }
-            for candidate in urls {
-                Task { await self.processFile(candidate, source: .automatic) }
+            for candidate in urls where self.generatedOutputPaths[candidate.standardizedFileURL.path] == nil {
+                Task {
+                    await self.processFile(
+                        candidate,
+                        source: .automatic,
+                        securityScopeURL: url,
+                        outputNameTemplate: folder.rule.outputNameTemplate
+                    )
+                }
             }
         }
         guard watcher.start() else {
@@ -1059,7 +1342,33 @@ final class AppModel: ObservableObject {
         if let data = try? PropertyListEncoder().encode(folderBookmarks) {
             defaults.set(data, forKey: folderBookmarksKey)
         }
-        monitoredFolders = folderBookmarks.map { MonitoredFolder(id: $0.id, path: $0.path) }
+        monitoredFolders = folderBookmarks.map { MonitoredFolder(id: $0.id, path: $0.path, rule: $0.rule) }
+    }
+
+    func applyOutputNameTemplate(_ template: String, to outputURL: URL, sourceURL: URL) throws -> URL {
+        let inputStem = sourceURL.deletingPathExtension().lastPathComponent
+        let date = DateFormatter()
+        date.locale = Locale(identifier: "en_US_POSIX")
+        date.dateFormat = "yyyyMMdd-HHmmss"
+        var stem = template
+            .replacingOccurrences(of: "{name}", with: inputStem)
+            .replacingOccurrences(of: "{date}", with: date.string(from: Date()))
+        stem = String(stem.filter { $0 != "/" && $0 != ":" }.prefix(120))
+            .trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+        if stem.isEmpty || stem == "." || stem == ".." { stem = "compressed" }
+        let ext = outputURL.pathExtension
+        let directory = outputURL.deletingLastPathComponent()
+        var suffix = 1
+        while true {
+            let candidateName = suffix == 1 ? "\(stem).\(ext)" : "\(stem)-\(suffix).\(ext)"
+            let candidate = directory.appendingPathComponent(candidateName)
+            if candidate.standardizedFileURL == outputURL.standardizedFileURL { return outputURL }
+            guard FileManager.default.fileExists(atPath: candidate.path) else {
+                try FileManager.default.moveItem(at: outputURL, to: candidate)
+                return candidate
+            }
+            suffix += 1
+        }
     }
 
     private func handleEntitlementChange(isPro: Bool) {

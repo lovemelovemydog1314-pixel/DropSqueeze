@@ -59,17 +59,71 @@ struct MenuBarView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-                if model.isManualQueueRunning {
-                    HStack {
-                        Text(model.queuedFileCount > 0 ? "队列中还有 \(model.queuedFileCount) 个文件" : "正在处理最后一个文件")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                        Spacer()
-                        Button("停止队列") { model.stopManualQueue() }
-                            .buttonStyle(.borderless)
-                            .font(.caption2)
+            }
+            if model.isManualQueueRunning {
+                HStack {
+                    Text(queueSummary)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    Button(model.isManualQueuePaused ? "继续" : "暂停") {
+                        model.isManualQueuePaused ? model.resumeManualQueue() : model.pauseManualQueue()
                     }
+                    .buttonStyle(.borderless)
+                    .font(.caption2)
+                    Button("停止") { model.stopManualQueue() }
+                        .buttonStyle(.borderless)
+                        .font(.caption2)
                 }
+            }
+            if !model.queueJobs.isEmpty {
+                DisclosureGroup("批处理队列 · \(model.queueJobs.filter { $0.state == .queued || $0.state == .processing }.count) 个待处理") {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 4) {
+                            ForEach(model.queueJobs) { job in
+                                HStack(spacing: 6) {
+                                    if job.state == .processing {
+                                        if let progress = job.progress {
+                                            ProgressView(value: progress).frame(width: 34)
+                                        } else {
+                                            ProgressView().controlSize(.mini)
+                                        }
+                                    } else {
+                                        Image(systemName: job.state == .completed ? "checkmark.circle" : "circle")
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Text(job.url.lastPathComponent)
+                                        .lineLimit(1)
+                                    Spacer(minLength: 4)
+                                    Text(job.state.title)
+                                        .foregroundStyle(.tertiary)
+                                        .help(job.detail ?? "")
+                                    if job.state == .queued {
+                                        Button {
+                                            model.removeQueuedJob(job.id)
+                                        } label: {
+                                            Image(systemName: "xmark.circle")
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("从队列移除")
+                                    } else if job.state == .skipped || job.state == .cancelled {
+                                        Button {
+                                            model.retryQueueJob(job.id)
+                                        } label: {
+                                            Image(systemName: "arrow.clockwise")
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("重试此文件")
+                                    }
+                                }
+                                .font(.caption2)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 170)
+                }
+                .font(.caption2)
             }
 
             Divider()
@@ -171,5 +225,13 @@ struct MenuBarView: View {
         case .videoFile: return "film"
         case .pdfFile: return "doc.text"
         }
+    }
+
+    private var queueSummary: String {
+        if model.isManualQueuePaused { return "队列已暂停" }
+        guard let remaining = model.estimatedQueueRemainingSeconds else {
+            return "排队中还有 \(model.queuedFileCount) 个文件"
+        }
+        return "队列余 \(model.queuedFileCount) 个 · 约 \(max(1, Int(remaining.rounded()))) 秒"
     }
 }

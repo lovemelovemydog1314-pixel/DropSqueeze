@@ -55,24 +55,30 @@ enum ImageCompressor {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
             throw ImageCompressionError.unreadableImage
         }
+        let detectedType = (CGImageSourceGetType(source) as String?) ?? typeIdentifier
+        guard supportedTypes.contains(detectedType) else { throw ImageCompressionError.unsupportedFormat }
         let frameCount = CGImageSourceGetCount(source)
         guard frameCount > 0 else { throw ImageCompressionError.unreadableImage }
         if frameCount > 1 {
-            guard typeIdentifier == UTType.gif.identifier else { throw ImageCompressionError.animatedImage }
+            guard detectedType == UTType.gif.identifier else { throw ImageCompressionError.animatedImage }
             return try compressAnimatedGIF(source: source, originalData: data, options: options)
         }
         guard !options.outputWebP || webPEncodingAvailable else { throw ImageCompressionError.webPUnavailable }
 
         let sourceProperties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
-        let targetType = options.outputTypeIdentifier
-            ?? (options.outputWebP ? UTType.webP.identifier : typeIdentifier)
+        let sourceHasTransparency = containsTransparentPixels(source: source, properties: sourceProperties)
+        let requestedTargetType = options.outputTypeIdentifier
+            ?? (options.outputWebP ? UTType.webP.identifier : detectedType)
+        // JPEG has no alpha channel. Preserve transparency by writing PNG instead of silently flattening it.
+        let targetType = sourceHasTransparency && requestedTargetType == UTType.jpeg.identifier
+            ? UTType.png.identifier
+            : requestedTargetType
         guard encodingAvailable(for: targetType) else {
             throw targetType == UTType.webP.identifier
                 ? ImageCompressionError.webPUnavailable
                 : ImageCompressionError.encodingFailed
         }
-        let didRequestFormatConversion = options.outputTypeIdentifier != nil
-            && options.outputTypeIdentifier != typeIdentifier
+        let didRequestFormatConversion = targetType != detectedType
         let resizedImage = thumbnail(source: source, index: 0, properties: sourceProperties, options: options)
 
         let output = NSMutableData()
@@ -169,10 +175,54 @@ enum ImageCompressor {
 
     private static func safeImageProperties(from source: [CFString: Any]) -> [CFString: Any] {
         var safe: [CFString: Any] = [:]
-        for key in [kCGImagePropertyDPIWidth, kCGImagePropertyDPIHeight, kCGImagePropertyOrientation] {
+        for key in [kCGImagePropertyDPIWidth, kCGImagePropertyDPIHeight, kCGImagePropertyOrientation,
+                    kCGImagePropertyProfileName, kCGImagePropertyColorModel] {
             if let value = source[key] { safe[key] = value }
         }
         return safe
+    }
+
+    private static func containsTransparentPixels(source: CGImageSource, properties: [CFString: Any]) -> Bool {
+        guard (properties[kCGImagePropertyHasAlpha] as? NSNumber)?.boolValue == true else { return false }
+        guard let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
+              width > 0, height > 0 else { return true }
+        // Decoding huge images just to inspect alpha can consume hundreds of megabytes.
+        // Preserve alpha conservatively above this bound.
+        let maximumPixels = 12_000_000
+        guard width <= maximumPixels / height else { return true }
+        guard let image = CGImageSourceCreateImageAtIndex(
+            source,
+            0,
+            [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
+        ) else { return true }
+
+        let bytesPerRow = width * 4
+        guard let pixels = calloc(height, bytesPerRow) else { return true }
+        guard let context = CGContext(
+                data: pixels,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo.byteOrder32Big.union(
+                    CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
+                ).rawValue
+              ) else {
+            free(pixels)
+            return true
+        }
+        defer { free(pixels) }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let alphaOffset = 3
+        for row in 0..<height {
+            let rowStart = pixels.advanced(by: row * bytesPerRow).assumingMemoryBound(to: UInt8.self)
+            for column in 0..<width where rowStart[column * 4 + alphaOffset] < 255 {
+                return true
+            }
+        }
+        return false
     }
 
     private static func compressAnimatedGIF(
@@ -238,6 +288,13 @@ enum ImageCompressor {
         return type.identifier
     }
 
+    static func detectedTypeIdentifier(at url: URL) -> String? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let type = CGImageSourceGetType(source) as String?,
+              supportedTypes.contains(type) else { return nil }
+        return type
+    }
+
     static func writeCompressedFile(
         _ compressed: CompressedImage,
         beside inputURL: URL,
@@ -265,7 +322,8 @@ enum ImageCompressor {
     }
 
     static func compressFile(at inputURL: URL, options: ImageCompressionOptions = .standard) throws -> CompressedImage? {
-        guard let typeIdentifier = typeIdentifier(forFileExtension: inputURL.pathExtension) else {
+        guard let typeIdentifier = detectedTypeIdentifier(at: inputURL)
+                ?? typeIdentifier(forFileExtension: inputURL.pathExtension) else {
             throw ImageCompressionError.unsupportedFormat
         }
         let input = try Data(contentsOf: inputURL, options: [.mappedIfSafe])

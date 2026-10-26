@@ -1,4 +1,4 @@
-import Darwin
+import CoreServices
 import Foundation
 
 final class DirectoryWatcher {
@@ -8,41 +8,64 @@ final class DirectoryWatcher {
     }
 
     private let directoryURL: URL
+    private let rule: FolderWatchRule
     private let onNewFiles: ([URL]) -> Void
-    private var source: DispatchSourceFileSystemObject?
+    private var eventStream: FSEventStreamRef?
     private var debounceWork: DispatchWorkItem?
     private var knownFiles: [String: FileStamp] = [:]
+    private var pendingFiles: [String: FileStamp] = [:]
 
-    init(directoryURL: URL, onNewFiles: @escaping ([URL]) -> Void) {
+    init(directoryURL: URL, rule: FolderWatchRule = FolderWatchRule(), onNewFiles: @escaping ([URL]) -> Void) {
         self.directoryURL = directoryURL
+        self.rule = rule
         self.onNewFiles = onNewFiles
     }
 
     @discardableResult
     func start() -> Bool {
-        guard source == nil else { return true }
+        guard eventStream == nil else { return true }
         knownFiles = currentCandidates()
-
-        let descriptor = open(directoryURL.path, O_EVTONLY)
-        guard descriptor >= 0 else { return false }
-
-        let watcher = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: descriptor,
-            eventMask: [.write, .extend, .rename, .delete],
-            queue: .main
+        var context = FSEventStreamContext(
+            version: 0,
+            info: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque()),
+            retain: nil,
+            release: nil,
+            copyDescription: nil
         )
-        watcher.setEventHandler { [weak self] in self?.scheduleScan() }
-        watcher.setCancelHandler { close(descriptor) }
-        watcher.resume()
-        source = watcher
+        let paths = [directoryURL.path] as CFArray
+        guard let stream = FSEventStreamCreate(
+            kCFAllocatorDefault,
+            Self.handleEvent,
+            &context,
+            paths,
+            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+            0.75,
+            UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer | kFSEventStreamCreateFlagWatchRoot)
+        ) else { return false }
+        FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
+        guard FSEventStreamStart(stream) else {
+            FSEventStreamInvalidate(stream)
+            FSEventStreamRelease(stream)
+            return false
+        }
+        eventStream = stream
         return true
     }
 
     func stop() {
         debounceWork?.cancel()
         debounceWork = nil
-        source?.cancel()
-        source = nil
+        guard let eventStream else { return }
+        FSEventStreamStop(eventStream)
+        FSEventStreamInvalidate(eventStream)
+        FSEventStreamRelease(eventStream)
+        self.eventStream = nil
+    }
+
+    private static let handleEvent: FSEventStreamCallback = { _, info, _, _, _, _ in
+        guard let info else { return }
+        let watcher = Unmanaged<DirectoryWatcher>.fromOpaque(info).takeUnretainedValue()
+        watcher.scheduleScan()
     }
 
     private func scheduleScan() {
@@ -54,44 +77,50 @@ final class DirectoryWatcher {
 
     private func scanForChanges() {
         let current = currentCandidates()
-        let changedURLs = current.compactMap { path, stamp -> URL? in
-            guard knownFiles[path] != stamp else { return nil }
-            return URL(fileURLWithPath: path)
+        pendingFiles = pendingFiles.filter { path, pendingStamp in
+            guard let currentStamp = current[path] else { return false }
+            return currentStamp != knownFiles[path] && currentStamp == pendingStamp
         }
-        knownFiles = current
+        var changedURLs: [URL] = []
+        for (path, stamp) in current where knownFiles[path] != stamp {
+            if pendingFiles[path] == stamp {
+                changedURLs.append(URL(fileURLWithPath: path))
+                knownFiles[path] = stamp
+                pendingFiles.removeValue(forKey: path)
+            } else {
+                pendingFiles[path] = stamp
+            }
+        }
         if !changedURLs.isEmpty { onNewFiles(changedURLs) }
+        if !pendingFiles.isEmpty { scheduleScan() }
     }
 
     private func currentCandidates() -> [String: FileStamp] {
-        guard let entries = try? FileManager.default.contentsOfDirectory(
-            at: directoryURL,
-            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
-        ) else { return [:] }
-
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
         var candidates: [String: FileStamp] = [:]
-        for url in entries where Self.isAutomaticCandidate(url) {
-            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]),
+        func addCandidate(_ url: URL) {
+            guard let values = try? url.resourceValues(forKeys: keys),
                   values.isRegularFile == true,
                   let size = values.fileSize,
-                  let modifiedAt = values.contentModificationDate else { continue }
+                  rule.accepts(url, size: Int64(size)),
+                  let modifiedAt = values.contentModificationDate else { return }
             candidates[url.path] = FileStamp(size: Int64(size), modifiedAt: modifiedAt)
         }
-        return candidates
-    }
 
-    private static func isAutomaticCandidate(_ url: URL) -> Bool {
-        let name = url.deletingPathExtension().lastPathComponent.lowercased()
-        guard !name.hasSuffix("-compressed"), !name.contains("-compressed-") else { return false }
-        let screenshotName = ["screen shot", "screenshot", "截屏", "屏幕快照", "屏幕截图", "屏幕截屏"]
-            .contains(where: name.contains)
-        let recordingName = ["screen recording", "屏幕录制", "录屏"]
-            .contains(where: name.contains)
-        let ext = url.pathExtension.lowercased()
-
-        if screenshotName {
-            return ["png", "jpg", "jpeg", "heic", "tif", "tiff"].contains(ext)
+        if rule.includeSubfolders {
+            guard let enumerator = FileManager.default.enumerator(
+                at: directoryURL,
+                includingPropertiesForKeys: Array(keys),
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else { return [:] }
+            for case let url as URL in enumerator { addCandidate(url) }
+        } else if let entries = try? FileManager.default.contentsOfDirectory(
+            at: directoryURL,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) {
+            for url in entries { addCandidate(url) }
         }
-        return recordingName && ext == "mov"
+        return candidates
     }
 }

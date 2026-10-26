@@ -15,7 +15,7 @@ final class DropZonePanelController {
 
     init(model: AppModel) {
         self.model = model
-        let size = NSSize(width: 340, height: 180)
+        let size = NSSize(width: 340, height: 205)
         let panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -188,12 +188,35 @@ private struct DropZoneView: View {
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            Menu {
+                ForEach(CompressionScenario.allCases) { scenario in
+                    Button("\(scenario.title) · \(scenario.detail)") {
+                        model.applyCompressionScenario(scenario)
+                    }
+                }
+                if !model.settings.savedProfiles.isEmpty {
+                    Divider()
+                    ForEach(model.settings.savedProfiles) { profile in
+                        Button("应用：\(profile.name)") { model.applySavedProfile(profile) }
+                    }
+                }
+            } label: {
+                Label("预设：\(model.settings.imageResizePreset.title)", systemImage: "slider.horizontal.3")
+                    .font(.system(size: 10, weight: .medium))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .menuStyle(.borderlessButton)
             if model.isManualQueueRunning {
                 HStack {
-                    Text(model.queuedFileCount > 0 ? "队列中还有 \(model.queuedFileCount) 个文件" : "正在处理最后一个文件")
+                    Text(model.isManualQueuePaused ? "队列已暂停" : (model.queuedFileCount > 0 ? "队列中还有 \(model.queuedFileCount) 个文件" : "正在处理最后一个文件"))
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                     Spacer()
+                    Button(model.isManualQueuePaused ? "继续" : "暂停") {
+                        model.isManualQueuePaused ? model.resumeManualQueue() : model.pauseManualQueue()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .medium))
                     Button("停止队列") { model.stopManualQueue() }
                         .buttonStyle(.plain)
                         .font(.system(size: 10, weight: .medium))

@@ -6,6 +6,7 @@ struct SettingsView: View {
     @ObservedObject var settings: RulesSettings
     @ObservedObject var purchaseManager: PurchaseManager
     @State private var isShowingPrivacy = false
+    @State private var newProfileName = ""
 
     var body: some View {
         ScrollView {
@@ -33,7 +34,7 @@ struct SettingsView: View {
                             get: { settings.clipboardMonitoringEnabled },
                             set: { model.setClipboardMonitoringEnabled($0) }
                         ))
-                        Toggle("监控截图和录屏文件夹", isOn: Binding(
+                        Toggle("自动监控文件夹", isOn: Binding(
                             get: { settings.folderMonitoringEnabled },
                             set: { model.setFolderMonitoringEnabled($0) }
                         ))
@@ -41,7 +42,7 @@ struct SettingsView: View {
                             get: { settings.notificationsEnabled },
                             set: { model.setNotificationsEnabled($0) }
                         ))
-                        Text("只处理名称包含截图或录屏字样的图片，以及录屏 MOV。原文件会保留。")
+                        Text("每个文件夹可以分别设置媒体类型、递归范围、文件名、大小上限和输出命名。原文件会保留。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Text("首次显示通知时，macOS 会请求通知权限。")
@@ -100,12 +101,80 @@ struct SettingsView: View {
                                 Text(preset.title).tag(preset)
                             }
                         }
+                        Picker("视频编码", selection: Binding(
+                            get: { settings.videoCodecPreference },
+                            set: { settings.setVideoCodecPreference($0) }
+                        )) {
+                            ForEach(VideoCodecPreference.allCases) { codec in
+                                Text(codec.title).tag(codec)
+                            }
+                        }
+                        Picker("码率 / 画质目标", selection: Binding(
+                            get: { settings.videoBitrateTarget },
+                            set: { settings.setVideoBitrateTarget($0) }
+                        )) {
+                            ForEach(VideoBitrateTarget.allCases) { target in
+                                Text(target.title).tag(target)
+                            }
+                        }
+                        Picker("帧率", selection: Binding(
+                            get: { settings.videoFrameRate },
+                            set: { settings.setVideoFrameRate($0) }
+                        )) {
+                            ForEach(VideoFrameRate.allCases) { rate in
+                                Text(rate.title).tag(rate)
+                            }
+                        }
+                        Toggle("保留原视频音频", isOn: Binding(
+                            get: { settings.videoIncludesAudio },
+                            set: { settings.setVideoIncludesAudio($0) }
+                        ))
                         Text(settings.videoOutputPreset.detail)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text("目标大小是上限；如果编码器无法达到上限，压缩会失败并保留原文件。")
+                        Text("H.264 兼容性更广；HEVC 通常更省空间。码率目标按视频时长换算为文件大小上限；可设置最高帧率或移除音轨。编码器无法达到上限时会保留原文件。")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
+                }
+
+                GroupBox("处理预设与自定义配置") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("预设会更新全局压缩设置，并同时用于拖入文件、剪贴板、监控文件夹和快捷指令。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        HStack {
+                            ForEach(CompressionScenario.allCases) { scenario in
+                                Button(scenario.title) { model.applyCompressionScenario(scenario) }
+                                    .buttonStyle(.bordered)
+                                    .help(scenario.detail)
+                            }
+                        }
+                        HStack {
+                            TextField("配置名称", text: $newProfileName)
+                            Button("保存当前设置") {
+                                guard settings.saveCurrentProfile(name: newProfileName) != nil else { return }
+                                newProfileName = ""
+                            }
+                            .disabled(newProfileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                        ForEach(settings.savedProfiles) { profile in
+                            HStack {
+                                Text(profile.name).lineLimit(1)
+                                Spacer()
+                                Button("应用") { model.applySavedProfile(profile) }
+                                Button {
+                                    settings.deleteProfile(profile.id)
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("删除此配置")
+                            }
+                            .font(.caption)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 4)
@@ -164,21 +233,27 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                         ForEach(model.monitoredFolders) { folder in
-                            HStack(spacing: 8) {
-                                Image(systemName: model.isFolderWatching(folder) ? "folder.badge.eye" : "folder")
-                                    .foregroundStyle(.secondary)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(folder.displayName).lineLimit(1)
-                                    Text(folder.path).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: model.isFolderWatching(folder) ? "folder.badge.eye" : "folder")
+                                        .foregroundStyle(.secondary)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(folder.displayName).lineLimit(1)
+                                        Text(folder.path).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                                    }
+                                    Spacer(minLength: 4)
+                                    Button {
+                                        model.removeWatchedFolder(folder)
+                                    } label: {
+                                        Image(systemName: "minus.circle")
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("移除此监控文件夹")
                                 }
-                                Spacer(minLength: 4)
-                                Button {
-                                    model.removeWatchedFolder(folder)
-                                } label: {
-                                    Image(systemName: "minus.circle")
+                                FolderRuleEditor(model: model, folder: folder)
+                                if folder.id != model.monitoredFolders.last?.id {
+                                    Divider()
                                 }
-                                .buttonStyle(.plain)
-                                .help("移除此监控文件夹")
                             }
                         }
                         HStack {
@@ -282,6 +357,60 @@ struct SettingsView: View {
         .sheet(isPresented: $isShowingPrivacy) {
             PrivacyPolicyView()
         }
+    }
+}
+
+private struct FolderRuleEditor: View {
+    @ObservedObject var model: AppModel
+    let folder: MonitoredFolder
+    @State private var rule: FolderWatchRule
+    @State private var maximumSizeText: String
+
+    init(model: AppModel, folder: MonitoredFolder) {
+        self.model = model
+        self.folder = folder
+        _rule = State(initialValue: folder.rule)
+        _maximumSizeText = State(initialValue: folder.rule.maximumFileSizeMB.map(String.init) ?? "")
+    }
+
+    var body: some View {
+        DisclosureGroup("监控规则 · \(folder.rule.scope.title)") {
+            VStack(alignment: .leading, spacing: 8) {
+                Picker("处理文件", selection: $rule.scope) {
+                    ForEach(FolderWatchScope.allCases) { scope in
+                        Text(scope.title).tag(scope)
+                    }
+                }
+                Toggle("包含子文件夹", isOn: $rule.includeSubfolders)
+                TextField("文件名必须包含（可留空）", text: $rule.filenameContains)
+                HStack {
+                    Text("最大文件大小 MB")
+                    TextField("不限", text: $maximumSizeText)
+                        .frame(width: 72)
+                        .onChange(of: maximumSizeText) { value in
+                            let digits = String(value.filter(\.isNumber).prefix(7))
+                            if digits != value { maximumSizeText = digits }
+                        }
+                }
+                TextField("输出名称模板：{name}-compressed", text: $rule.outputNameTemplate)
+                Text("可用变量：{name} 原文件名，{date} 日期。原文件会保留。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Spacer()
+                    Button("保存规则") {
+                        rule.maximumFileSizeMB = Int(maximumSizeText).flatMap { $0 > 0 ? $0 : nil }
+                        if rule.outputNameTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            rule.outputNameTemplate = "{name}-compressed"
+                        }
+                        model.updateFolderRule(folder.id, rule: rule)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            .padding(.top, 6)
+        }
+        .font(.caption)
     }
 }
 
