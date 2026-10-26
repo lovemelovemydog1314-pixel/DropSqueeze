@@ -4,6 +4,7 @@ import SwiftUI
 struct MenuBarView: View {
     @ObservedObject var model: AppModel
     @State private var selectedTab = 0
+    @State private var selectedComparison: HistoryItem?
 
     var body: some View {
         VStack(spacing: 10) {
@@ -21,6 +22,9 @@ struct MenuBarView: View {
         }
         .padding(12)
         .frame(width: 370, height: 570)
+        .sheet(item: $selectedComparison) { item in
+            OutputComparisonView(item: item)
+        }
     }
 
     private var overview: some View {
@@ -42,6 +46,31 @@ struct MenuBarView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
+            if let currentFileName = model.currentFileName {
+                HStack(spacing: 8) {
+                    if let progress = model.currentProgress {
+                        ProgressView(value: progress)
+                            .progressViewStyle(.linear)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                    Text(currentFileName)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                if model.isManualQueueRunning {
+                    HStack {
+                        Text(model.queuedFileCount > 0 ? "队列中还有 \(model.queuedFileCount) 个文件" : "正在处理最后一个文件")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        Spacer()
+                        Button("停止队列") { model.stopManualQueue() }
+                            .buttonStyle(.borderless)
+                            .font(.caption2)
+                    }
+                }
+            }
 
             Divider()
 
@@ -98,8 +127,26 @@ struct MenuBarView: View {
                                     .foregroundStyle(.secondary)
                                 Text(item.name).lineLimit(1)
                                 Spacer(minLength: 8)
-                                Text("−\(model.formattedSize(item.savedBytes))")
-                                    .foregroundStyle(.secondary)
+                                if item.kind == .imageFile && item.resultBytes >= item.originalBytes {
+                                    Text("格式转换")
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text("−\(model.formattedSize(item.savedBytes))")
+                                        .foregroundStyle(.secondary)
+                                }
+                                if item.outputPath != nil {
+                                    Menu {
+                                        Button("打开压缩结果") { model.openOutput(for: item) }
+                                        Button("在 Finder 中显示") { model.revealOutput(for: item) }
+                                        if item.sourcePath != nil {
+                                            Button("对比原件与结果") { selectedComparison = item }
+                                        }
+                                    } label: {
+                                        Image(systemName: "ellipsis.circle")
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                    .menuStyle(.borderlessButton)
+                                }
                             }
                             .font(.caption)
                             .help("\(model.formattedSize(item.originalBytes)) → \(model.formattedSize(item.resultBytes))")
@@ -122,6 +169,7 @@ struct MenuBarView: View {
         case .clipboardImage: return "doc.on.clipboard"
         case .imageFile: return "photo"
         case .videoFile: return "film"
+        case .pdfFile: return "doc.text"
         }
     }
 }

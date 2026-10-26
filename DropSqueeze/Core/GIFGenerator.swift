@@ -50,7 +50,7 @@ enum GIFGenerator {
     private static let maximumDuration = 15.0
     private static let maximumDimension = 1280.0
 
-    static func generateSmallerGIF(from inputURL: URL) async throws -> URL {
+    static func generateSmallerGIF(from inputURL: URL, outputDirectory: URL? = nil) async throws -> URL {
         let asset = AVURLAsset(url: inputURL)
         let duration = try await asset.load(.duration)
         let durationSeconds = duration.seconds
@@ -70,17 +70,23 @@ enum GIFGenerator {
             preferredTransform: preferredTransform
         )
         return try await Task.detached(priority: .utility) {
-            try generateSynchronously(from: inputURL, source: source, durationSeconds: durationSeconds)
+            try generateSynchronously(
+                from: inputURL,
+                outputDirectory: outputDirectory,
+                source: source,
+                durationSeconds: durationSeconds
+            )
         }.value
     }
 
     private static func generateSynchronously(
         from inputURL: URL,
+        outputDirectory: URL?,
         source: GIFVideoSource,
         durationSeconds: Double
     ) throws -> URL {
         let fileManager = FileManager.default
-        let directory = inputURL.deletingLastPathComponent()
+        let directory = outputDirectory ?? inputURL.deletingLastPathComponent()
         let temporaryURL = directory.appendingPathComponent(".dropsqueeze-\(UUID().uuidString).gif")
         defer { try? fileManager.removeItem(at: temporaryURL) }
 

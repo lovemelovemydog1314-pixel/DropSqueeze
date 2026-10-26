@@ -4,18 +4,23 @@ DropSqueeze is a menu bar utility that compresses screenshots and recordings loc
 
 ## Features
 
-- Watches the clipboard for newly copied PNG, JPEG, HEIC, TIFF, and WebP images. It replaces the clipboard image only after successful compression and adds a private marker to prevent a processing loop. The previous clipboard image can be restored until the clipboard changes again.
-- Handles Finder-copied image, MOV, and MP4 file URLs automatically. The clipboard is changed to the compressed copies only when at least one copy was produced.
+- Watches the clipboard for newly copied PNG, JPEG, HEIC, TIFF, WebP, and GIF images. It replaces the clipboard image only after successful compression and adds a private marker to prevent a processing loop. The previous clipboard image can be restored until the clipboard changes again.
+- Handles Finder-copied image, MOV, MP4, and M4V file URLs automatically. The clipboard is changed to the compressed copies only when at least one copy was produced.
 - Watches user-authorized folders using security-scoped bookmarks. It processes files named like screenshots or recordings, and keeps the original file.
 - Shows a floating drop zone near the top edge while dragging. A free user can drop one file at a time; batch drops open the Pro purchase screen.
-- Re-encodes PNG and TIFF without lossy quality changes; JPEG, HEIC, and WebP use high quality lossy encoding. WebP output is enabled when the installed macOS image encoder supports it.
-- Converts MOV and MP4 to a smaller 720p MP4. When the Pro GIF rule is enabled, MOV files up to 15 seconds are converted to a GIF with at most 30 frames per second. Results that are not smaller are discarded.
+- Re-encodes PNG and TIFF without lossy quality changes; JPEG, HEIC, and WebP use adjustable quality. Static file images can be converted to JPEG, HEIC, PNG, or WebP; animated GIFs retain their frames and stay GIF. Image output can be resized to a maximum long edge and can strip EXIF, GPS, and comments. Clipboard WebP and file WebP output have independent Pro settings and require a macOS image encoder that supports WebP.
+- Converts MOV, MP4, and M4V using a selectable 720p or 1080p preset. Optional 10 MB and 25 MB targets enforce a maximum file size; the original stays in place if the target cannot be reached or the result is not smaller. When the Pro GIF rule is enabled, MOV files up to 15 seconds are converted to a GIF with at most 30 frames per second.
+- Can show an optional completion notification with before/after sizes. Clipboard notifications include an undo action that restores the prior clipboard contents if nothing has replaced them since.
+- Shows live video progress for manual jobs, queues multiple drops, can stop the remaining queue, and offers Open or Reveal in Finder actions for recent outputs.
+- Lets users choose a persistent output folder for dropped, monitored, and Shortcuts files; by default, each result stays beside its source. The original remains unchanged in either mode.
+- Provides a “压缩媒体文件” App Intents action for Shortcuts. Use it in a personal shortcut or a Finder Quick Action; it returns compressed copies and preserves the source files. Free users can process one file per action; batch processing requires Pro.
+- Pro can optimize embedded images in PDFs while retaining text and vector content. Encrypted and digitally signed PDFs are skipped, and the source is always preserved.
 - Shows recent output, daily compression counts, total savings, and the current week's saved space. History is stored locally and can be cleared from Settings.
 
 ## Free and Pro
 
 - Free: up to 15 successful automatic image compressions and 3 successful automatic video compressions per day, plus manual one-file drops.
-- Pro: no automatic daily quotas, batch drops, multiple monitored folders, Retina 2× downscaling, WebP output, and MOV-to-GIF conversion.
+- Pro: no automatic daily quotas, batch drops, multiple monitored folders, Retina 2× downscaling, separate clipboard and file WebP output rules, MOV-to-GIF conversion, and PDF compression.
 - StoreKit 2 reads localized product names and prices from the App Store. The app uses these product identifiers:
   - `com.dropsqueeze.pro.annual` — auto-renewable annual subscription.
   - `com.dropsqueeze.pro.lifetime` — non-consumable lifetime purchase.
@@ -38,4 +43,8 @@ For a local purchase-flow check, create a StoreKit Configuration in Xcode with t
 
 Media processing runs on the Mac. Clipboard content, source files, and compression history are not sent to a developer server. Clipboard monitoring and folder monitoring can be disabled in Settings. Folder access is granted by the user through `NSOpenPanel`; the app stores a security-scoped bookmark locally so access can be restored on later launches. StoreKit communicates with Apple for product and purchase state.
 
-The app has no account system or analytics backend. Local preferences include monitoring toggles, folder bookmarks, quota counters, history, and aggregate space-saved statistics.
+The app has no account system or analytics backend. Local preferences include monitoring toggles, input and output folder bookmarks, image and video settings, quota counters, history, and aggregate space-saved statistics.
+
+## Finder Quick Action
+
+Create a shortcut in the macOS Shortcuts app, set it to receive files from Finder, add the “压缩媒体文件” DropSqueeze action, and enable “Use as Quick Action.” Run it from Finder’s Quick Actions menu. The action returns compressed copies; it does not replace the selected files.

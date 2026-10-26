@@ -61,6 +61,7 @@ final class ClipboardMonitor {
             (NSPasteboard.PasteboardType(UTType.jpeg.identifier), UTType.jpeg.identifier),
             (NSPasteboard.PasteboardType(UTType.heic.identifier), UTType.heic.identifier),
             (NSPasteboard.PasteboardType(UTType.webP.identifier), UTType.webP.identifier),
+            (NSPasteboard.PasteboardType(UTType.gif.identifier), UTType.gif.identifier),
             (.tiff, UTType.tiff.identifier)
         ]
 

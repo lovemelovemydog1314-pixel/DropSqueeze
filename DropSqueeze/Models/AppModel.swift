@@ -7,6 +7,7 @@ struct HistoryItem: Codable, Identifiable {
         case clipboardImage
         case imageFile
         case videoFile
+        case pdfFile
     }
 
     let id: UUID
@@ -15,18 +16,87 @@ struct HistoryItem: Codable, Identifiable {
     let originalBytes: Int64
     let resultBytes: Int64
     let date: Date
+    let sourcePath: String?
     let outputPath: String?
+    let sourceBookmarkData: Data?
+    let outputBookmarkData: Data?
 
     var savedBytes: Int64 { max(0, originalBytes - resultBytes) }
 
-    init(name: String, kind: Kind, originalBytes: Int64, resultBytes: Int64, outputPath: String? = nil) {
+    init(
+        name: String,
+        kind: Kind,
+        originalBytes: Int64,
+        resultBytes: Int64,
+        outputPath: String? = nil,
+        sourceURL: URL? = nil,
+        outputURL: URL? = nil
+    ) {
         self.id = UUID()
         self.name = name
         self.kind = kind
         self.originalBytes = originalBytes
         self.resultBytes = resultBytes
         self.date = Date()
-        self.outputPath = outputPath
+        self.sourcePath = sourceURL?.path
+        self.outputPath = outputURL?.path ?? outputPath
+        self.sourceBookmarkData = Self.makeBookmark(for: sourceURL)
+        self.outputBookmarkData = Self.makeBookmark(for: outputURL)
+    }
+
+    var resolvedSourceURL: URL? {
+        Self.resolveBookmark(sourceBookmarkData) ?? sourcePath.map { URL(fileURLWithPath: $0) }
+    }
+
+    var resolvedOutputURL: URL? {
+        Self.resolveBookmark(outputBookmarkData) ?? outputPath.map { URL(fileURLWithPath: $0) }
+    }
+
+    private static func makeBookmark(for url: URL?) -> Data? {
+        guard let url else { return nil }
+        return try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+    }
+
+    private static func resolveBookmark(_ data: Data?) -> URL? {
+        guard let data else { return nil }
+        var isStale = false
+        return try? URL(
+            resolvingBookmarkData: data,
+            options: .withSecurityScope,
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        )
+    }
+}
+
+private struct FileCompressionOutcome {
+    let outputURL: URL
+    let originalBytes: Int64
+    let resultBytes: Int64
+    let didConvertFormat: Bool
+}
+
+private struct ManualQueueItem {
+    let batchID: UUID
+    let url: URL
+}
+
+private struct ManualQueueBatch {
+    var remainingCount: Int
+    var outcomes: [FileCompressionOutcome] = []
+}
+
+enum ShortcutCompressionError: LocalizedError {
+    case batchRequiresPro
+    case pdfRequiresPro
+    case noSupportedFiles
+
+    var errorDescription: String? {
+        switch self {
+        case .batchRequiresPro: return "快捷指令批量压缩需要 DropSqueeze Pro。"
+        case .pdfRequiresPro: return "PDF 压缩需要 DropSqueeze Pro。"
+        case .noSupportedFiles: return "没有生成压缩副本；请检查文件格式或选择更大的输出预设。"
+        }
     }
 }
 
@@ -53,9 +123,17 @@ private actor FileProcessingGate {
 
 @MainActor
 final class AppModel: ObservableObject {
+    static weak var shared: AppModel?
+
     @Published private(set) var statusMessage = "拖入图片或视频即可压缩"
     @Published private(set) var history: [HistoryItem] = []
     @Published private(set) var monitoredFolders: [MonitoredFolder] = []
+    @Published private(set) var outputFolderURL: URL?
+    @Published private(set) var requiresOutputFolderAuthorization = false
+    @Published private(set) var currentFileName: String?
+    @Published private(set) var currentProgress: Double?
+    @Published private(set) var queuedFileCount = 0
+    @Published private(set) var isManualQueueRunning = false
     @Published private(set) var isProcessing = false
     @Published private(set) var canUndoClipboardCompression = false
     @Published private(set) var isDropZoneVisible = true
@@ -69,10 +147,12 @@ final class AppModel: ObservableObject {
     var hideDropZoneHandler: (() -> Void)?
     var dropAcceptedHandler: (() -> Void)?
     var showPaywallHandler: (() -> Void)?
+    var compressionNotificationHandler: ((CompressionNotice) -> Void)?
 
     private enum FileSource: Equatable {
         case automatic
         case manualDrop
+        case shortcut
     }
 
     private enum UndoAction {
@@ -94,13 +174,21 @@ final class AppModel: ObservableObject {
     private var directoryWatchers: [UUID: DirectoryWatcher] = [:]
     private var scopedFolderURLs: [UUID: URL] = [:]
     private var pendingClipboardPayloads: [ClipboardPayload] = []
+    private var manualFileQueue: [ManualQueueItem] = []
+    private var manualQueueBatches: [UUID: ManualQueueBatch] = [:]
+    private var processingFilePaths: Set<String> = []
+    private var activeVideoCancellation: VideoTranscoderCancellation?
+    private var activeFileSource: FileSource?
+    private var activeProgressID: UUID?
     private var clipboardTaskRunning = false
     private var undoAction: UndoAction?
+    private var undoActionID: UUID?
     private var processingCount = 0
     private var didStart = false
 
     private let folderBookmarksKey = "monitoredFolderBookmarks"
     private let legacyBookmarkKey = "watchedFolderBookmark"
+    private let outputFolderBookmarkKey = "outputFolderBookmark"
     private let historyKey = "compressionHistory"
     private let totalSavedKey = "totalSavedBytes"
     private let dailyCountKey = "dailyCompressionCount"
@@ -123,15 +211,28 @@ final class AppModel: ObservableObject {
     }
 
     var latestOutputURL: URL? {
-        guard let path = history.first(where: { $0.outputPath != nil })?.outputPath else { return nil }
-        let url = URL(fileURLWithPath: path)
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        history.lazy.compactMap { item -> URL? in
+            guard let url = item.resolvedOutputURL else { return nil }
+            let startedAccess = url.startAccessingSecurityScopedResource()
+            defer { if startedAccess { url.stopAccessingSecurityScopedResource() } }
+            return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        }.first
     }
 
     init() {
+        Self.shared = self
         if let data = defaults.data(forKey: historyKey),
            let items = try? PropertyListDecoder().decode([HistoryItem].self, from: data) {
             history = items
+        }
+
+        if let data = defaults.data(forKey: outputFolderBookmarkKey) {
+            if let (url, refreshedData) = Self.resolveBookmark(data) {
+                outputFolderURL = url
+                if refreshedData != data { defaults.set(refreshedData, forKey: outputFolderBookmarkKey) }
+            } else {
+                requiresOutputFolderAuthorization = true
+            }
         }
 
         if let data = defaults.data(forKey: folderBookmarksKey),
@@ -190,6 +291,32 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func setVideoOutputPreset(_ preset: VideoOutputPreset) {
+        settings.setVideoOutputPreset(preset)
+        statusMessage = "视频输出预设已设为：\(preset.title)"
+    }
+
+    func setImageFileOutputFormat(_ format: ImageFileOutputFormat) {
+        if let typeIdentifier = format.typeIdentifier,
+           !ImageCompressor.encodingAvailable(for: typeIdentifier) {
+            statusMessage = "当前 macOS 无法编码为所选图片格式"
+            return
+        }
+        if format == .webP {
+            guard purchaseManager.isPro else {
+                requestPro(for: .feature(.fileWebPOutput))
+                return
+            }
+        }
+        settings.setImageFileOutputFormat(format)
+        statusMessage = "文件图片输出格式已设为：\(format.title)"
+    }
+
+    func setNotificationsEnabled(_ enabled: Bool) {
+        settings.setNotificationsEnabled(enabled)
+        statusMessage = enabled ? "压缩完成通知已开启" : "压缩完成通知已关闭"
+    }
+
     func setProFeature(_ feature: ProFeature, enabled: Bool) {
         guard enabled else {
             settings.set(feature, enabled: false)
@@ -199,7 +326,8 @@ final class AppModel: ObservableObject {
             requestPro(for: .feature(feature))
             return
         }
-        if feature == .webPOutput, !ImageCompressor.webPEncodingAvailable {
+        if (feature == .clipboardWebPOutput || feature == .fileWebPOutput),
+           !ImageCompressor.webPEncodingAvailable {
             statusMessage = "此 macOS 版本暂不支持 WebP 编码"
             return
         }
@@ -247,6 +375,44 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func chooseOutputFolder() {
+        let currentFolder = outputFolderURL
+        let startedCurrentFolderAccess = currentFolder?.startAccessingSecurityScopedResource() ?? false
+        defer { if startedCurrentFolderAccess { currentFolder?.stopAccessingSecurityScopedResource() } }
+
+        let panel = NSOpenPanel()
+        panel.title = "选择压缩结果保存位置"
+        panel.message = "所有文件压缩结果会保存到此文件夹；原文件保持不变。"
+        panel.prompt = "使用此文件夹"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = currentFolder
+            ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let data = try url.bookmarkData(
+                options: .withSecurityScope,
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+            outputFolderURL = url
+            requiresOutputFolderAuthorization = false
+            defaults.set(data, forKey: outputFolderBookmarkKey)
+            statusMessage = "压缩结果将保存到：\(url.lastPathComponent)"
+        } catch {
+            statusMessage = "无法保存输出文件夹授权：\(error.localizedDescription)"
+        }
+    }
+
+    func resetOutputFolder() {
+        outputFolderURL = nil
+        requiresOutputFolderAuthorization = false
+        defaults.removeObject(forKey: outputFolderBookmarkKey)
+        statusMessage = "压缩结果将保存到各原文件所在文件夹"
+    }
+
     func removeWatchedFolder(_ folder: MonitoredFolder) {
         stopFolderWatcher(id: folder.id)
         folderBookmarks.removeAll { $0.id == folder.id }
@@ -259,7 +425,10 @@ final class AppModel: ObservableObject {
     }
 
     func processDroppedURLs(_ urls: [URL]) {
-        let validURLs = urls.filter(\.isFileURL)
+        var seenPaths = Set<String>()
+        let validURLs = urls.filter { url in
+            url.isFileURL && seenPaths.insert(url.standardizedFileURL.path).inserted
+        }
         guard !validURLs.isEmpty else { return }
         guard validURLs.count == 1 || purchaseManager.isPro else {
             statusMessage = "批量压缩需要 DropSqueeze Pro"
@@ -268,9 +437,81 @@ final class AppModel: ObservableObject {
         }
         dropRequestCount += 1
         dropAcceptedHandler?()
-        for url in validURLs {
-            Task { await processFile(url, source: .manualDrop) }
+        let batchID = UUID()
+        manualQueueBatches[batchID] = ManualQueueBatch(remainingCount: validURLs.count)
+        manualFileQueue.append(contentsOf: validURLs.map { ManualQueueItem(batchID: batchID, url: $0) })
+        queuedFileCount = manualFileQueue.count
+        guard !isManualQueueRunning else { return }
+        isManualQueueRunning = true
+        Task { await drainManualQueue() }
+    }
+
+    func stopManualQueue() {
+        guard isManualQueueRunning else { return }
+        let pendingItems = manualFileQueue
+        manualFileQueue.removeAll()
+        queuedFileCount = 0
+        for item in pendingItems {
+            completeManualQueueItem(item, outcome: nil)
         }
+        if activeFileSource == .manualDrop { activeVideoCancellation?.cancel() }
+        statusMessage = "已停止剩余压缩任务"
+    }
+
+    private func drainManualQueue() async {
+        while !manualFileQueue.isEmpty {
+            let item = manualFileQueue.removeFirst()
+            queuedFileCount = manualFileQueue.count
+            let outcome = await processFile(item.url, source: .manualDrop, notifyOnSuccess: false)
+            completeManualQueueItem(item, outcome: outcome)
+        }
+        isManualQueueRunning = false
+        if currentFileName == nil { currentProgress = nil }
+    }
+
+    private func completeManualQueueItem(_ item: ManualQueueItem, outcome: FileCompressionOutcome?) {
+        guard var batch = manualQueueBatches[item.batchID] else { return }
+        if let outcome { batch.outcomes.append(outcome) }
+        batch.remainingCount = max(0, batch.remainingCount - 1)
+        if batch.remainingCount == 0 {
+            notifyFileCompression(batch.outcomes)
+            manualQueueBatches.removeValue(forKey: item.batchID)
+        } else {
+            manualQueueBatches[item.batchID] = batch
+        }
+    }
+
+    func compressShortcutFiles(_ urls: [URL], videoPreset: VideoOutputPreset) async throws -> [URL] {
+        var seenPaths = Set<String>()
+        let validURLs = urls.filter { url in
+            url.isFileURL && seenPaths.insert(url.standardizedFileURL.path).inserted
+        }
+        guard !validURLs.isEmpty else { throw ShortcutCompressionError.noSupportedFiles }
+        await purchaseManager.refreshEntitlements()
+        guard validURLs.count == 1 || purchaseManager.isPro else {
+            requestPro(for: .batchCompression)
+            throw ShortcutCompressionError.batchRequiresPro
+        }
+        guard !validURLs.contains(where: { $0.pathExtension.lowercased() == "pdf" }) || purchaseManager.isPro else {
+            requestPro(for: .pdfCompression)
+            throw ShortcutCompressionError.pdfRequiresPro
+        }
+
+        var outcomes: [FileCompressionOutcome] = []
+        for url in validURLs {
+            if let outcome = await processFile(
+                url,
+                source: .shortcut,
+                reportStatus: false,
+                notifyOnSuccess: false,
+                videoPresetOverride: videoPreset
+            ) {
+                outcomes.append(outcome)
+            }
+        }
+        guard !outcomes.isEmpty else { throw ShortcutCompressionError.noSupportedFiles }
+        notifyFileCompression(outcomes)
+        return outcomes.map(\.outputURL)
     }
 
     func requestPro(for reason: PaywallReason) {
@@ -290,11 +531,38 @@ final class AppModel: ObservableObject {
         statusMessage = "本地压缩历史已清除"
     }
 
-    func undoClipboardCompression() {
+    func openOutput(for item: HistoryItem) {
+        withOutputAccess(for: item) { _ = NSWorkspace.shared.open($0) }
+    }
+
+    func revealOutput(for item: HistoryItem) {
+        withOutputAccess(for: item) { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
+    }
+
+    private func withOutputAccess(for item: HistoryItem, perform: (URL) -> Void) {
+        guard let url = item.resolvedOutputURL else {
+            statusMessage = "压缩结果已移动或删除"
+            return
+        }
+        let startedAccess = url.startAccessingSecurityScopedResource()
+        defer { if startedAccess { url.stopAccessingSecurityScopedResource() } }
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            statusMessage = "压缩结果已移动或删除"
+            return
+        }
+        perform(url)
+    }
+
+    func undoClipboardCompression(notificationID: UUID? = nil) {
         guard let undoAction else { return }
+        if let notificationID, notificationID != undoActionID {
+            statusMessage = "这条撤销通知已过期"
+            return
+        }
         let pasteboard = NSPasteboard.general
         guard pasteboard.changeCount == undoAction.changeCount else {
             self.undoAction = nil
+            undoActionID = nil
             canUndoClipboardCompression = false
             statusMessage = "剪贴板内容已变化，无法撤销"
             return
@@ -313,11 +581,13 @@ final class AppModel: ObservableObject {
         }
         guard didRestore else {
             self.undoAction = nil
+            undoActionID = nil
             canUndoClipboardCompression = false
             statusMessage = "无法还原剪贴板"
             return
         }
         self.undoAction = nil
+        undoActionID = nil
         canUndoClipboardCompression = false
         statusMessage = "已还原剪贴板"
     }
@@ -347,6 +617,7 @@ final class AppModel: ObservableObject {
         clipboardMonitor.onExternalChange = { [weak self] in
             Task { @MainActor in
                 self?.undoAction = nil
+                self?.undoActionID = nil
                 self?.canUndoClipboardCompression = false
             }
         }
@@ -364,6 +635,7 @@ final class AppModel: ObservableObject {
     private func enqueueClipboardPayload(_ payload: ClipboardPayload) {
         guard settings.clipboardMonitoringEnabled else { return }
         undoAction = nil
+        undoActionID = nil
         canUndoClipboardCompression = false
         pendingClipboardPayloads.append(payload)
         runNextClipboardPayloadIfNeeded()
@@ -397,7 +669,7 @@ final class AppModel: ObservableObject {
         defer { usageTracker.complete(reservation, succeeded: succeeded) }
 
         do {
-            let options = settings.imageOptions
+            let options = settings.clipboardImageOptions
             guard !options.outputWebP || ImageCompressor.webPEncodingAvailable else {
                 throw ImageCompressionError.webPUnavailable
             }
@@ -429,6 +701,8 @@ final class AppModel: ObservableObject {
                 return
             }
             undoAction = .image(data: data, typeIdentifier: typeIdentifier, changeCount: pasteboard.changeCount)
+            let actionID = UUID()
+            undoActionID = actionID
             canUndoClipboardCompression = true
             let itemRecord = HistoryItem(
                 name: "剪贴板图片",
@@ -440,6 +714,12 @@ final class AppModel: ObservableObject {
             succeeded = true
             let percent = savingPercent(originalBytes: Int64(result.originalByteCount), resultBytes: Int64(result.data.count))
             statusMessage = "已省 \(percent)% · \(formattedSize(Int64(result.originalByteCount))) → \(formattedSize(Int64(result.data.count)))"
+            sendCompressionNotice(.clipboard(
+                fileCount: 1,
+                originalBytes: Int64(result.originalByteCount),
+                resultBytes: Int64(result.data.count),
+                undoID: actionID
+            ))
         } catch {
             statusMessage = "剪贴板图片未处理：\(error.localizedDescription)"
         }
@@ -448,18 +728,18 @@ final class AppModel: ObservableObject {
 
     private func processClipboardFiles(urls: [URL], changeCount: Int) async {
         var compressedURLs: [URL] = []
-        var didCompress = false
+        var outcomes: [FileCompressionOutcome] = []
         for url in urls {
-            if let resultURL = await processFile(url, source: .automatic, reportStatus: false) {
-                compressedURLs.append(resultURL)
-                didCompress = didCompress || resultURL != url
+            if let outcome = await processFile(url, source: .automatic, reportStatus: false, notifyOnSuccess: false) {
+                compressedURLs.append(outcome.outputURL)
+                outcomes.append(outcome)
             } else {
                 compressedURLs.append(url)
             }
         }
 
         let pasteboard = NSPasteboard.general
-        if didCompress, pasteboard.changeCount == changeCount {
+        if !outcomes.isEmpty, pasteboard.changeCount == changeCount {
             pasteboard.clearContents()
             guard pasteboard.writeObjects(filePasteboardItems(for: compressedURLs)) else {
                 pasteboard.clearContents()
@@ -469,8 +749,19 @@ final class AppModel: ObservableObject {
                 return
             }
             undoAction = .files(urls: urls, changeCount: pasteboard.changeCount)
+            let actionID = UUID()
+            undoActionID = actionID
             canUndoClipboardCompression = true
-            statusMessage = "已压缩剪贴板中的文件，可直接粘贴压缩副本"
+            let originalBytes = outcomes.reduce(Int64(0)) { $0 + $1.originalBytes }
+            let resultBytes = outcomes.reduce(Int64(0)) { $0 + $1.resultBytes }
+            let percent = savingPercent(originalBytes: originalBytes, resultBytes: resultBytes)
+            statusMessage = "已省 \(percent)% · \(formattedSize(originalBytes)) → \(formattedSize(resultBytes))，可直接粘贴压缩副本"
+            sendCompressionNotice(.clipboard(
+                fileCount: outcomes.count,
+                originalBytes: originalBytes,
+                resultBytes: resultBytes,
+                undoID: actionID
+            ))
         }
         finishClipboardTask()
     }
@@ -482,18 +773,44 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    private func processFile(_ url: URL, source: FileSource, reportStatus: Bool = true) async -> URL? {
+    private func processFile(
+        _ url: URL,
+        source: FileSource,
+        reportStatus: Bool = true,
+        notifyOnSuccess: Bool = true,
+        videoPresetOverride: VideoOutputPreset? = nil
+    ) async -> FileCompressionOutcome? {
         guard url.isFileURL else { return nil }
         let ext = url.pathExtension.lowercased()
         let isImage = ImageCompressor.typeIdentifier(forFileExtension: ext) != nil
-        let isVideo = ext == "mov" || ext == "mp4"
-        guard isImage || isVideo else {
+        let isVideo = ext == "mov" || ext == "mp4" || ext == "m4v"
+        let isPDF = ext == "pdf"
+        guard isImage || isVideo || isPDF else {
             if reportStatus { statusMessage = "暂不支持 \(url.pathExtension.uppercased())" }
             return nil
         }
+        if isPDF, !purchaseManager.isPro {
+            if reportStatus { statusMessage = "PDF 压缩需要 DropSqueeze Pro" }
+            requestPro(for: .pdfCompression)
+            return nil
+        }
+        if requiresOutputFolderAuthorization {
+            if reportStatus { statusMessage = "压缩结果文件夹无法访问，请重新选择保存位置" }
+            return nil
+        }
+        if isImage, settings.imageFileOutputFormat == .webP, !purchaseManager.isPro {
+            if reportStatus { statusMessage = "文件图片输出 WebP 需要 DropSqueeze Pro" }
+            requestPro(for: .feature(.fileWebPOutput))
+            return nil
+        }
 
+        let processingPath = url.standardizedFileURL.path
+        guard processingFilePaths.insert(processingPath).inserted else { return nil }
         await fileProcessingGate.acquire()
-        defer { Task { await fileProcessingGate.release() } }
+        defer {
+            processingFilePaths.remove(processingPath)
+            Task { await fileProcessingGate.release() }
+        }
 
         let reservation: UsageReservation?
         if source == .automatic {
@@ -515,9 +832,38 @@ final class AppModel: ObservableObject {
 
         let startedAccess = url.startAccessingSecurityScopedResource()
         defer { if startedAccess { url.stopAccessingSecurityScopedResource() } }
+        let scopedOutputFolder = outputFolderURL
+        let outputDirectory = scopedOutputFolder ?? url.deletingLastPathComponent()
+        let startedOutputAccess = scopedOutputFolder?.startAccessingSecurityScopedResource() ?? false
+        defer { if startedOutputAccess { scopedOutputFolder?.stopAccessingSecurityScopedResource() } }
+        if scopedOutputFolder != nil {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: outputDirectory.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue,
+                  FileManager.default.isWritableFile(atPath: outputDirectory.path) else {
+                requiresOutputFolderAuthorization = true
+                if reportStatus { statusMessage = "无法写入压缩结果文件夹，请重新选择一个有写入权限的位置" }
+                return nil
+            }
+        }
         processingCount += 1
         isProcessing = true
+        let progressID = UUID()
+        activeProgressID = progressID
+        activeFileSource = source
+        currentFileName = url.lastPathComponent
+        let videoCanBeCancelled = isVideo && !(ext == "mov" && settings.gifConversionEnabled)
+        let videoCancellation = videoCanBeCancelled ? VideoTranscoderCancellation() : nil
+        activeVideoCancellation = videoCancellation
+        currentProgress = videoCanBeCancelled ? 0 : nil
         defer {
+            if activeProgressID == progressID {
+                activeProgressID = nil
+                currentFileName = nil
+                currentProgress = nil
+            }
+            if activeVideoCancellation === videoCancellation { activeVideoCancellation = nil }
+            activeFileSource = nil
             processingCount = max(0, processingCount - 1)
             isProcessing = clipboardTaskRunning || processingCount > 0
         }
@@ -526,15 +872,27 @@ final class AppModel: ObservableObject {
             let outputURL: URL
             let originalSize: Int64
             let resultSize: Int64
+            var didConvertImageFormat = false
 
-            if isImage {
-                let options = settings.imageOptions
+            if isPDF {
+                let compressed = try await Task.detached(priority: .utility) {
+                    try PDFCompressor.compressFile(at: url, outputDirectory: outputDirectory)
+                }.value
+                guard let compressed else {
+                    if reportStatus { statusMessage = "\(url.lastPathComponent)：没有更小的结果，原件保留" }
+                    return nil
+                }
+                outputURL = compressed.outputURL
+                originalSize = compressed.originalByteCount
+                resultSize = compressed.resultByteCount
+            } else if isImage {
+                let options = settings.fileImageOptions
                 guard !options.outputWebP || ImageCompressor.webPEncodingAvailable else {
                     throw ImageCompressionError.webPUnavailable
                 }
                 let output = try await Task.detached(priority: .utility) { () throws -> (URL, CompressedImage)? in
                     guard let compressed = try ImageCompressor.compressFile(at: url, options: options) else { return nil }
-                    return (try ImageCompressor.writeCompressedFile(compressed, beside: url), compressed)
+                    return (try ImageCompressor.writeCompressedFile(compressed, beside: url, in: outputDirectory), compressed)
                 }.value
                 guard let (writtenURL, compressed) = output else {
                     if reportStatus { statusMessage = "\(url.lastPathComponent)：没有更小的结果，原件保留" }
@@ -543,11 +901,23 @@ final class AppModel: ObservableObject {
                 outputURL = writtenURL
                 originalSize = Int64(compressed.originalByteCount)
                 resultSize = Int64(compressed.data.count)
+                didConvertImageFormat = ImageCompressor.typeIdentifier(forFileExtension: ext) != compressed.typeIdentifier
             } else {
                 if ext == "mov", settings.gifConversionEnabled {
-                    outputURL = try await GIFGenerator.generateSmallerGIF(from: url)
+                    outputURL = try await GIFGenerator.generateSmallerGIF(from: url, outputDirectory: outputDirectory)
                 } else {
-                    outputURL = try await VideoTranscoder.transcodeToSmallerMP4(url)
+                    outputURL = try await VideoTranscoder.transcodeToSmallerMP4(
+                        url,
+                        preset: videoPresetOverride ?? settings.videoOutputPreset,
+                        outputDirectory: outputDirectory,
+                        cancellation: videoCancellation,
+                        onProgress: { [weak self] progress in
+                            Task { @MainActor [weak self] in
+                                guard let self, self.activeProgressID == progressID else { return }
+                                self.currentProgress = progress
+                            }
+                        }
+                    )
                 }
                 originalSize = Self.fileSize(at: url)
                 resultSize = Self.fileSize(at: outputURL)
@@ -555,19 +925,39 @@ final class AppModel: ObservableObject {
 
             record(HistoryItem(
                 name: url.lastPathComponent,
-                kind: isImage ? .imageFile : .videoFile,
+                kind: isPDF ? .pdfFile : (isImage ? .imageFile : .videoFile),
                 originalBytes: originalSize,
                 resultBytes: resultSize,
-                outputPath: outputURL.path
+                sourceURL: url,
+                outputURL: outputURL
             ))
             succeeded = true
             if reportStatus {
-                let percent = savingPercent(originalBytes: originalSize, resultBytes: resultSize)
-                statusMessage = "\(isImage ? "图片" : "视频")已省 \(percent)%：\(outputURL.lastPathComponent)"
+                if didConvertImageFormat {
+                    statusMessage = "图片格式已转换：\(outputURL.lastPathComponent)"
+                } else {
+                    let percent = savingPercent(originalBytes: originalSize, resultBytes: resultSize)
+                    let mediaLabel = isPDF ? "PDF" : (isImage ? "图片" : "视频")
+                    statusMessage = "\(mediaLabel)已省 \(percent)%：\(outputURL.lastPathComponent)"
+                }
             }
-            return outputURL
+            let outcome = FileCompressionOutcome(
+                outputURL: outputURL,
+                originalBytes: originalSize,
+                resultBytes: resultSize,
+                didConvertFormat: didConvertImageFormat
+            )
+            if notifyOnSuccess { notifyFileCompression([outcome]) }
+            return outcome
         } catch {
-            if reportStatus { statusMessage = "\(url.lastPathComponent)：\(error.localizedDescription)" }
+            if reportStatus {
+                if let videoError = error as? VideoTranscodingError,
+                   case .cancelled = videoError {
+                    statusMessage = "已取消：\(url.lastPathComponent)"
+                } else {
+                    statusMessage = "\(url.lastPathComponent)：\(error.localizedDescription)"
+                }
+            }
             return nil
         }
     }
@@ -585,6 +975,23 @@ final class AppModel: ObservableObject {
             defaults.set(Date(), forKey: dailyCountDateKey)
             defaults.set(1, forKey: dailyCountKey)
         }
+    }
+
+    private func notifyFileCompression(_ outcomes: [FileCompressionOutcome]) {
+        guard !outcomes.isEmpty else { return }
+        let originalBytes = outcomes.reduce(Int64(0)) { $0 + $1.originalBytes }
+        let resultBytes = outcomes.reduce(Int64(0)) { $0 + $1.resultBytes }
+        sendCompressionNotice(.files(
+            fileCount: outcomes.count,
+            originalBytes: originalBytes,
+            resultBytes: resultBytes,
+            includesFormatConversion: outcomes.contains(where: \.didConvertFormat)
+        ))
+    }
+
+    private func sendCompressionNotice(_ notice: CompressionNotice) {
+        guard settings.notificationsEnabled else { return }
+        compressionNotificationHandler?(notice)
     }
 
     private func savingPercent(originalBytes: Int64, resultBytes: Int64) -> Int {

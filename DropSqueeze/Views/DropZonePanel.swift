@@ -15,7 +15,7 @@ final class DropZonePanelController {
 
     init(model: AppModel) {
         self.model = model
-        let size = NSSize(width: 340, height: 148)
+        let size = NSSize(width: 340, height: 180)
         let panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -155,15 +155,50 @@ private struct DropZoneView: View {
                 .buttonStyle(.plain)
                 .help("隐藏悬浮压缩舱")
             }
-            Text(isTargeted ? "松开以压缩" : model.statusMessage)
+            if let currentFileName = model.currentFileName {
+                HStack(spacing: 6) {
+                    Text(currentFileName)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    if model.queuedFileCount > 0 {
+                        Text("+\(model.queuedFileCount) 排队")
+                            .foregroundStyle(.tertiary)
+                    }
+                }
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Text("拖入 PNG · JPEG · HEIC · TIFF · WebP · MOV · MP4")
+                if let progress = model.currentProgress {
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+                        .tint(.accentColor)
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                Text(isTargeted ? "松开以压缩" : model.statusMessage)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Text("拖入图片 · GIF · PDF · MOV · MP4 · M4V")
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            if model.isManualQueueRunning {
+                HStack {
+                    Text(model.queuedFileCount > 0 ? "队列中还有 \(model.queuedFileCount) 个文件" : "正在处理最后一个文件")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    Button("停止队列") { model.stopManualQueue() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10, weight: .medium))
+                }
+            }
             if let outputURL = model.latestOutputURL {
                 Label {
                     Text("拖出：\(outputURL.lastPathComponent)")
@@ -198,7 +233,7 @@ private struct DropZoneView: View {
         .animation(.easeOut(duration: 0.16), value: isTargeted)
         .onDrop(of: [UTType.fileURL], isTargeted: $isTargeted, perform: receiveFiles)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("DropSqueeze 文件压缩区，拖入 PNG、JPEG、HEIC、TIFF、WebP、MOV 或 MP4")
+        .accessibilityLabel("DropSqueeze 文件压缩区，拖入图片、GIF、PDF、MOV、MP4 或 M4V")
     }
 
     private func receiveFiles(_ providers: [NSItemProvider]) -> Bool {

@@ -20,9 +20,18 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
     let model = AppModel()
     private var dropZonePanel: DropZonePanelController?
     private var paywallWindow: PaywallWindowController?
+    private var compressionNotificationController: CompressionNotificationController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        let notifications = CompressionNotificationController()
+        notifications.onUndoClipboardCompression = { [weak self] id in
+            self?.model.undoClipboardCompression(notificationID: id)
+        }
+        model.compressionNotificationHandler = { [weak notifications] notice in
+            notifications?.post(notice)
+        }
+        compressionNotificationController = notifications
         dropZonePanel = DropZonePanelController(model: model)
         paywallWindow = PaywallWindowController(model: model)
         model.showPaywallHandler = { [weak self] in self?.paywallWindow?.show() }
