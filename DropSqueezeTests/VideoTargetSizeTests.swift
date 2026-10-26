@@ -56,6 +56,42 @@ final class VideoTargetSizeTests: XCTestCase {
         XCTAssertEqual(reopenedSettings.savedProfiles.first?.videoMaximumSizeMB, 18)
     }
 
+    @MainActor
+    func testScenarioPresetsCoverEmailWebAndArchiveUseCases() {
+        let suiteName = "DropSqueezeTests.scenarios.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settings = RulesSettings(defaults: defaults)
+
+        XCTAssertEqual(Set(CompressionScenario.allCases.map(\.id)).count, CompressionScenario.allCases.count)
+        XCTAssertTrue(CompressionScenario.allCases.allSatisfy { !$0.title.isEmpty && !$0.detail.isEmpty })
+
+        settings.setVideoMaximumSizeMB(42)
+        settings.applyScenario(.emailAttachment)
+        XCTAssertEqual(settings.imageResizePreset, .max1920)
+        XCTAssertEqual(settings.imageFileOutputFormat, .jpeg)
+        XCTAssertTrue(settings.stripImageMetadata)
+        XCTAssertEqual(settings.videoOutputPreset, .compact10MB)
+        XCTAssertEqual(settings.videoCodecPreference, .h264)
+        XCTAssertNil(settings.videoMaximumSizeMB, "Applying a built-in preset must clear the prior custom cap.")
+
+        settings.applyScenario(.webPublishing)
+        XCTAssertEqual(settings.imageFileOutputFormat, .webP)
+        XCTAssertTrue(settings.stripImageMetadata)
+        XCTAssertEqual(settings.imageResizePreset, .max2560)
+        XCTAssertEqual(CompressionScenario.webPublishing.requiredProFeature, .fileWebPOutput)
+        XCTAssertNil(CompressionScenario.emailAttachment.requiredProFeature)
+
+        settings.applyScenario(.archive)
+        XCTAssertEqual(settings.imageResizePreset, .max4096)
+        XCTAssertEqual(settings.imageQuality, 0.96, accuracy: 0.001)
+        XCTAssertEqual(settings.imageFileOutputFormat, .original)
+        XCTAssertFalse(settings.stripImageMetadata)
+        XCTAssertEqual(settings.videoCodecPreference, .hevc)
+        XCTAssertEqual(settings.videoOutputPreset, .high1080p)
+        XCTAssertEqual(settings.videoFrameRate, .original)
+    }
+
     func testTranscodeHonorsCustomMaximumAndPreservesSource() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("DropSqueeze-video-target-\(UUID().uuidString)", isDirectory: true)

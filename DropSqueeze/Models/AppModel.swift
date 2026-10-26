@@ -335,6 +335,15 @@ final class AppModel: ObservableObject {
     }
 
     func applyCompressionScenario(_ scenario: CompressionScenario) {
+        if let feature = scenario.requiredProFeature, !purchaseManager.isPro {
+            requestPro(for: .feature(feature))
+            return
+        }
+        if let typeIdentifier = scenario.profile.imageFileOutputFormat.typeIdentifier,
+           !ImageCompressor.encodingAvailable(for: typeIdentifier) {
+            statusMessage = "当前 macOS 无法应用此预设的图片格式"
+            return
+        }
         settings.applyScenario(scenario)
         statusMessage = "已应用预设：\(scenario.title)"
     }

@@ -230,10 +230,13 @@ struct ImageCompressionOptions: Sendable {
     )
 }
 
-enum CompressionScenario: String, CaseIterable, Identifiable, Sendable {
+enum CompressionScenario: String, CaseIterable, Codable, Identifiable, Sendable {
     case balanced
     case messaging
     case highQuality
+    case emailAttachment
+    case webPublishing
+    case archive
 
     var id: String { rawValue }
 
@@ -242,6 +245,9 @@ enum CompressionScenario: String, CaseIterable, Identifiable, Sendable {
         case .balanced: return "均衡"
         case .messaging: return "聊天分享"
         case .highQuality: return "高画质"
+        case .emailAttachment: return "邮件附件"
+        case .webPublishing: return "网页图片"
+        case .archive: return "清晰归档"
         }
     }
 
@@ -250,7 +256,94 @@ enum CompressionScenario: String, CaseIterable, Identifiable, Sendable {
         case .balanced: return "日常图片与 720p 视频"
         case .messaging: return "缩小图片并优先控制视频体积"
         case .highQuality: return "保留高分辨率与图像细节"
+        case .emailAttachment: return "图片清除位置等信息；视频优先控制在 10 MB 内"
+        case .webPublishing: return "图片输出 WebP 并移除多余元数据"
+        case .archive: return "保留原始图像信息并优先保存细节"
         }
+    }
+
+    var requiredProFeature: ProFeature? {
+        self == .webPublishing ? .fileWebPOutput : nil
+    }
+
+    var profile: SavedCompressionProfile {
+        let imageResizePreset: ImageResizePreset
+        let imageQuality: Double
+        let imageFileOutputFormat: ImageFileOutputFormat
+        let stripImageMetadata: Bool
+        let videoOutputPreset: VideoOutputPreset
+        let videoCodecPreference: VideoCodecPreference
+        let videoBitrateTarget: VideoBitrateTarget
+        let videoFrameRate: VideoFrameRate
+        switch self {
+        case .balanced:
+            imageResizePreset = .max2560
+            imageQuality = 0.84
+            imageFileOutputFormat = .original
+            stripImageMetadata = false
+            videoOutputPreset = .standard720p
+            videoCodecPreference = .automatic
+            videoBitrateTarget = .balanced
+            videoFrameRate = .original
+        case .messaging:
+            imageResizePreset = .max1920
+            imageQuality = 0.76
+            imageFileOutputFormat = .jpeg
+            stripImageMetadata = true
+            videoOutputPreset = .compact10MB
+            videoCodecPreference = .hevc
+            videoBitrateTarget = .economy
+            videoFrameRate = .fps30
+        case .highQuality:
+            imageResizePreset = .max4096
+            imageQuality = 0.92
+            imageFileOutputFormat = .original
+            stripImageMetadata = false
+            videoOutputPreset = .high1080p
+            videoCodecPreference = .automatic
+            videoBitrateTarget = .highQuality
+            videoFrameRate = .original
+        case .emailAttachment:
+            imageResizePreset = .max1920
+            imageQuality = 0.72
+            imageFileOutputFormat = .jpeg
+            stripImageMetadata = true
+            videoOutputPreset = .compact10MB
+            videoCodecPreference = .h264
+            videoBitrateTarget = .economy
+            videoFrameRate = .fps30
+        case .webPublishing:
+            imageResizePreset = .max2560
+            imageQuality = 0.82
+            imageFileOutputFormat = .webP
+            stripImageMetadata = true
+            videoOutputPreset = .standard720p
+            videoCodecPreference = .h264
+            videoBitrateTarget = .balanced
+            videoFrameRate = .fps30
+        case .archive:
+            imageResizePreset = .max4096
+            imageQuality = 0.96
+            imageFileOutputFormat = .original
+            stripImageMetadata = false
+            videoOutputPreset = .high1080p
+            videoCodecPreference = .hevc
+            videoBitrateTarget = .highQuality
+            videoFrameRate = .original
+        }
+        return SavedCompressionProfile(
+            name: title,
+            imageResizePreset: imageResizePreset,
+            imageQuality: imageQuality,
+            imageFileOutputFormat: imageFileOutputFormat,
+            stripImageMetadata: stripImageMetadata,
+            videoOutputPreset: videoOutputPreset,
+            videoCodecPreference: videoCodecPreference,
+            videoBitrateTarget: videoBitrateTarget,
+            videoFrameRate: videoFrameRate,
+            videoIncludesAudio: true,
+            videoMaximumSizeMB: nil
+        )
     }
 }
 
@@ -460,38 +553,7 @@ final class RulesSettings: ObservableObject {
     }
 
     func applyScenario(_ scenario: CompressionScenario) {
-        switch scenario {
-        case .balanced:
-            setImageResizePreset(.max2560)
-            setImageQuality(0.84)
-            setImageFileOutputFormat(.original)
-            setStripImageMetadata(false)
-            setVideoOutputPreset(.standard720p)
-            setVideoCodecPreference(.automatic)
-            setVideoBitrateTarget(.balanced)
-            setVideoFrameRate(.original)
-            setVideoIncludesAudio(true)
-        case .messaging:
-            setImageResizePreset(.max1920)
-            setImageQuality(0.76)
-            setImageFileOutputFormat(.jpeg)
-            setStripImageMetadata(true)
-            setVideoOutputPreset(.compact10MB)
-            setVideoCodecPreference(.hevc)
-            setVideoBitrateTarget(.economy)
-            setVideoFrameRate(.fps30)
-            setVideoIncludesAudio(true)
-        case .highQuality:
-            setImageResizePreset(.max4096)
-            setImageQuality(0.92)
-            setImageFileOutputFormat(.original)
-            setStripImageMetadata(false)
-            setVideoOutputPreset(.high1080p)
-            setVideoCodecPreference(.automatic)
-            setVideoBitrateTarget(.highQuality)
-            setVideoFrameRate(.original)
-            setVideoIncludesAudio(true)
-        }
+        apply(scenario.profile)
     }
 
     @discardableResult

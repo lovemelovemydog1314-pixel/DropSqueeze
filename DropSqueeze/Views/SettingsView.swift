@@ -181,9 +181,11 @@ struct SettingsView: View {
                         Text("预设会更新全局压缩设置，并同时用于拖入文件、剪贴板、监控文件夹和快捷指令。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        HStack {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), alignment: .leading, spacing: 6) {
                             ForEach(CompressionScenario.allCases) { scenario in
-                                Button(scenario.title) { model.applyCompressionScenario(scenario) }
+                                Button(scenario.requiredProFeature == nil ? scenario.title : "\(scenario.title) · Pro") {
+                                    model.applyCompressionScenario(scenario)
+                                }
                                     .buttonStyle(.bordered)
                                     .help(scenario.detail)
                             }

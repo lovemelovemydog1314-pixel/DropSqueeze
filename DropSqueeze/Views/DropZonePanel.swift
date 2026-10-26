@@ -190,7 +190,7 @@ private struct DropZoneView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             Menu {
                 ForEach(CompressionScenario.allCases) { scenario in
-                    Button("\(scenario.title) · \(scenario.detail)") {
+                    Button("\(scenario.title)\(scenario.requiredProFeature == nil ? "" : " · Pro") · \(scenario.detail)") {
                         model.applyCompressionScenario(scenario)
                     }
                 }
