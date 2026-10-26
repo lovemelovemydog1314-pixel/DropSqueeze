@@ -1,0 +1,15 @@
+# macOS and Xcode user files
+.DS_Store
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+*.moved-aside
+
+# Build products and generated compiler files
+DerivedData/
+build/
+*.app/
+*.dSYM/
+*.hmap
+*.ipa
