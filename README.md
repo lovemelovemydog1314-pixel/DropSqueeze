@@ -17,6 +17,7 @@ DropSqueeze is a menu bar utility that compresses screenshots and recordings loc
 - Provides a “压缩媒体文件” App Intents action for Shortcuts. Use it in a personal shortcut or a Finder Quick Action; it returns compressed copies and preserves the source files. Free users can process one file per action; batch processing requires Pro.
 - Pro can optimize embedded images in PDFs while retaining text and vector content. Encrypted and digitally signed PDFs are skipped, and the source is always preserved.
 - Shows recent output, daily compression counts, total savings, and the current week's saved space. History is stored locally and can be cleared from Settings.
+- Shows actual format, dimensions, video codec, frame rate, audio-track presence, or PDF page count in the before/after comparison when the source can be inspected.
 
 ## Free and Pro
 

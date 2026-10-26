@@ -1,6 +1,119 @@
 import AppKit
+import AVFoundation
 import Combine
 import Foundation
+import ImageIO
+import PDFKit
+import UniformTypeIdentifiers
+
+struct MediaTechnicalDetails: Codable, Equatable {
+    let format: String
+    let width: Int?
+    let height: Int?
+    let framesPerSecond: Double?
+    let videoCodec: String?
+    let audioTrackCount: Int?
+    let pageCount: Int?
+
+    var summary: String {
+        var values = [format]
+        if let width, let height { values.append("\(width) × \(height)") }
+        if let videoCodec { values.append(videoCodec) }
+        if let framesPerSecond {
+            let roundedFrameRate = framesPerSecond.rounded()
+            values.append("\(Int(roundedFrameRate)) fps")
+        }
+        if let audioTrackCount { values.append(audioTrackCount == 0 ? "无音轨" : "含音轨") }
+        if let pageCount { values.append("\(pageCount) 页") }
+        return values.joined(separator: " · ")
+    }
+
+    static func read(from url: URL, kind: HistoryItem.Kind) async -> MediaTechnicalDetails? {
+        switch kind {
+        case .imageFile:
+            return imageDetails(at: url)
+        case .videoFile:
+            return await videoDetails(at: url)
+        case .pdfFile:
+            return pdfDetails(at: url)
+        case .clipboardImage:
+            return nil
+        }
+    }
+
+    private static func imageDetails(at url: URL) -> MediaTechnicalDetails? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else { return nil }
+        let typeIdentifier = CGImageSourceGetType(source) as String?
+        let format = typeIdentifier.flatMap { UTType($0)?.preferredFilenameExtension?.uppercased() }
+            ?? url.pathExtension.uppercased()
+        return MediaTechnicalDetails(
+            format: format.isEmpty ? "图片" : format,
+            width: properties[kCGImagePropertyPixelWidth] as? Int,
+            height: properties[kCGImagePropertyPixelHeight] as? Int,
+            framesPerSecond: nil,
+            videoCodec: nil,
+            audioTrackCount: nil,
+            pageCount: nil
+        )
+    }
+
+    private static func videoDetails(at url: URL) async -> MediaTechnicalDetails? {
+        let asset = AVURLAsset(url: url)
+        do {
+            guard let track = try await asset.loadTracks(withMediaType: .video).first else { return nil }
+            let naturalSize = try await track.load(.naturalSize)
+            let transform = try await track.load(.preferredTransform)
+            let orientedBounds = CGRect(origin: .zero, size: naturalSize).applying(transform)
+            let width = Int(abs(orientedBounds.width).rounded())
+            let height = Int(abs(orientedBounds.height).rounded())
+            let frameRate = Double(try await track.load(.nominalFrameRate))
+            let descriptions = try await track.load(.formatDescriptions)
+            let codec = descriptions.first.map { videoCodecName(CMFormatDescriptionGetMediaSubType($0)) }
+            let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+            return MediaTechnicalDetails(
+                format: url.pathExtension.uppercased().isEmpty ? "视频" : url.pathExtension.uppercased(),
+                width: width > 0 ? width : nil,
+                height: height > 0 ? height : nil,
+                framesPerSecond: frameRate.isFinite && frameRate > 0 ? frameRate : nil,
+                videoCodec: codec,
+                audioTrackCount: audioTracks.count,
+                pageCount: nil
+            )
+        } catch {
+            return nil
+        }
+    }
+
+    private static func pdfDetails(at url: URL) -> MediaTechnicalDetails? {
+        guard let document = PDFDocument(url: url) else { return nil }
+        return MediaTechnicalDetails(
+            format: "PDF",
+            width: nil,
+            height: nil,
+            framesPerSecond: nil,
+            videoCodec: nil,
+            audioTrackCount: nil,
+            pageCount: document.pageCount
+        )
+    }
+
+    private static func videoCodecName(_ subtype: FourCharCode) -> String {
+        let bytes: [UInt8] = [
+            UInt8((subtype >> 24) & 0xff),
+            UInt8((subtype >> 16) & 0xff),
+            UInt8((subtype >> 8) & 0xff),
+            UInt8(subtype & 0xff)
+        ]
+        let code = String(bytes: bytes, encoding: .ascii)?.lowercased() ?? ""
+        switch code {
+        case "avc1", "avc3": return "H.264"
+        case "hvc1", "hev1": return "HEVC"
+        case "apch", "apcn", "apcs", "apco": return "ProRes"
+        default: return code.uppercased().isEmpty ? "视频编码" : code.uppercased()
+        }
+    }
+}
 
 struct HistoryItem: Codable, Identifiable {
     enum Kind: String, Codable {
@@ -20,6 +133,8 @@ struct HistoryItem: Codable, Identifiable {
     let outputPath: String?
     let sourceBookmarkData: Data?
     let outputBookmarkData: Data?
+    let sourceDetails: MediaTechnicalDetails?
+    let outputDetails: MediaTechnicalDetails?
 
     var savedBytes: Int64 { max(0, originalBytes - resultBytes) }
 
@@ -30,7 +145,9 @@ struct HistoryItem: Codable, Identifiable {
         resultBytes: Int64,
         outputPath: String? = nil,
         sourceURL: URL? = nil,
-        outputURL: URL? = nil
+        outputURL: URL? = nil,
+        sourceDetails: MediaTechnicalDetails? = nil,
+        outputDetails: MediaTechnicalDetails? = nil
     ) {
         self.id = UUID()
         self.name = name
@@ -42,6 +159,8 @@ struct HistoryItem: Codable, Identifiable {
         self.outputPath = outputURL?.path ?? outputPath
         self.sourceBookmarkData = Self.makeBookmark(for: sourceURL)
         self.outputBookmarkData = Self.makeBookmark(for: outputURL)
+        self.sourceDetails = sourceDetails
+        self.outputDetails = outputDetails
     }
 
     var resolvedSourceURL: URL? {
@@ -1292,13 +1411,19 @@ final class AppModel: ObservableObject {
                 outputURL = try applyOutputNameTemplate(outputNameTemplate, to: outputURL, sourceURL: url)
             }
 
+            let historyKind: HistoryItem.Kind = isPDF ? .pdfFile : (isImage ? .imageFile : .videoFile)
+            let sourceDetails = await MediaTechnicalDetails.read(from: url, kind: historyKind)
+            let outputDetails = await MediaTechnicalDetails.read(from: outputURL, kind: historyKind)
+
             record(HistoryItem(
                 name: url.lastPathComponent,
-                kind: isPDF ? .pdfFile : (isImage ? .imageFile : .videoFile),
+                kind: historyKind,
                 originalBytes: originalSize,
                 resultBytes: resultSize,
                 sourceURL: url,
-                outputURL: outputURL
+                outputURL: outputURL,
+                sourceDetails: sourceDetails,
+                outputDetails: outputDetails
             ))
             generatedOutputPaths[outputURL.standardizedFileURL.path] = Date()
             generatedOutputPaths = generatedOutputPaths.filter { Date().timeIntervalSince($0.value) < 86_400 }

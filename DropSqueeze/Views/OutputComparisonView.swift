@@ -46,8 +46,22 @@ struct OutputComparisonView: View {
             }
 
             HStack(spacing: 14) {
-                comparisonPanel(title: "原件", size: item.originalBytes, image: sourceImage, player: sourcePlayer, pdf: sourcePDF)
-                comparisonPanel(title: "压缩结果", size: item.resultBytes, image: outputImage, player: outputPlayer, pdf: outputPDF)
+                comparisonPanel(
+                    title: "原件",
+                    size: item.originalBytes,
+                    details: item.sourceDetails?.summary,
+                    image: sourceImage,
+                    player: sourcePlayer,
+                    pdf: sourcePDF
+                )
+                comparisonPanel(
+                    title: "压缩结果",
+                    size: item.resultBytes,
+                    details: item.outputDetails?.summary,
+                    image: outputImage,
+                    player: outputPlayer,
+                    pdf: outputPDF
+                )
             }
             if isVideo {
                 Text("视频预览默认静音；两侧可分别播放和拖动进度。")
@@ -66,6 +80,7 @@ struct OutputComparisonView: View {
     private func comparisonPanel(
         title: String,
         size: Int64,
+        details: String?,
         image: NSImage?,
         player: AVPlayer?,
         pdf: PDFDocument?
@@ -74,9 +89,18 @@ struct OutputComparisonView: View {
             HStack {
                 Text(title).font(.headline)
                 Spacer()
-                Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    if let details, !details.isEmpty {
+                        Text(details)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
             }
             Group {
                 if let player {

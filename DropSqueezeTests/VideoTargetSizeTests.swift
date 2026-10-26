@@ -1,5 +1,7 @@
 import AVFoundation
+import AppKit
 import CoreVideo
+import PDFKit
 import XCTest
 @testable import DropSqueeze
 
@@ -208,6 +210,105 @@ final class VideoTargetSizeTests: XCTestCase {
         XCTAssertEqual(roundTrip, videoFolderRule)
     }
 
+    func testHistoryItemFromBeforeTechnicalDetailsStillDecodes() throws {
+        let legacyItem = HistoryItem(
+            name: "old.png",
+            kind: .imageFile,
+            originalBytes: 100,
+            resultBytes: 50
+        )
+        let encoded = try PropertyListEncoder().encode(legacyItem)
+        var legacyDictionary = try XCTUnwrap(
+            PropertyListSerialization.propertyList(from: encoded, format: nil) as? [String: Any]
+        )
+        legacyDictionary.removeValue(forKey: "sourceDetails")
+        legacyDictionary.removeValue(forKey: "outputDetails")
+        let legacyData = try PropertyListSerialization.data(fromPropertyList: legacyDictionary, format: .binary, options: 0)
+
+        let decoded = try PropertyListDecoder().decode(HistoryItem.self, from: legacyData)
+        XCTAssertEqual(decoded.name, "old.png")
+        XCTAssertNil(decoded.sourceDetails)
+        XCTAssertNil(decoded.outputDetails)
+    }
+
+    func testImageTechnicalDetailsReportActualFormatAndDimensions() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DropSqueeze-image-details-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let imageURL = directory.appendingPathComponent("details.png")
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 37,
+            pixelsHigh: 19,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let imageData = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        try imageData.write(to: imageURL)
+
+        let optionalDetails = await MediaTechnicalDetails.read(from: imageURL, kind: .imageFile)
+        let details = try XCTUnwrap(optionalDetails)
+        XCTAssertEqual(details.format, "PNG")
+        XCTAssertEqual(details.width, 37)
+        XCTAssertEqual(details.height, 19)
+        XCTAssertTrue(details.summary.contains("PNG"))
+        XCTAssertTrue(details.summary.contains("37 × 19"))
+
+        let historyItem = HistoryItem(
+            name: "details.png",
+            kind: .imageFile,
+            originalBytes: Int64(imageData.count),
+            resultBytes: Int64(imageData.count / 2),
+            sourceDetails: details,
+            outputDetails: details
+        )
+        let restoredItem = try PropertyListDecoder().decode(
+            HistoryItem.self,
+            from: PropertyListEncoder().encode(historyItem)
+        )
+        XCTAssertEqual(restoredItem.sourceDetails, details)
+        XCTAssertEqual(restoredItem.outputDetails, details)
+    }
+
+    func testPDFTechnicalDetailsReportPageCount() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DropSqueeze-pdf-details-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let pdfURL = directory.appendingPathComponent("details.pdf")
+
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 32,
+            pixelsHigh: 24,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let image = NSImage(size: NSSize(width: 32, height: 24))
+        image.addRepresentation(bitmap)
+        let document = PDFDocument()
+        document.insert(try XCTUnwrap(PDFPage(image: image)), at: 0)
+        document.insert(try XCTUnwrap(PDFPage(image: image)), at: 1)
+        try XCTUnwrap(document.dataRepresentation()).write(to: pdfURL)
+
+        let optionalDetails = await awaitDetails(from: pdfURL, kind: .pdfFile)
+        let details = try XCTUnwrap(optionalDetails)
+        XCTAssertEqual(details.format, "PDF")
+        XCTAssertEqual(details.pageCount, 2)
+        XCTAssertTrue(details.summary.contains("2 页"))
+    }
+
     @MainActor
     func testScenarioPresetsCoverEmailWebAndArchiveUseCases() {
         let suiteName = "DropSqueezeTests.scenarios.\(UUID().uuidString)"
@@ -254,6 +355,12 @@ final class VideoTargetSizeTests: XCTestCase {
         try makeTestVideo(at: inputURL, width: 1280, height: 720, frameCount: 120)
         let originalBytes = try Self.fileSize(at: inputURL)
         XCTAssertGreaterThan(originalBytes, 1_000_000, "Fixture must be large enough to exercise the custom cap.")
+        let optionalSourceDetails = await MediaTechnicalDetails.read(from: inputURL, kind: .videoFile)
+        let sourceDetails = try XCTUnwrap(optionalSourceDetails)
+        XCTAssertEqual(sourceDetails.width, 1280)
+        XCTAssertEqual(sourceDetails.height, 720)
+        XCTAssertEqual(sourceDetails.videoCodec, "H.264")
+        XCTAssertEqual(sourceDetails.audioTrackCount, 0)
 
         let outputURL = try await VideoTranscoder.transcodeToSmallerMP4(
             inputURL,
@@ -276,6 +383,12 @@ final class VideoTargetSizeTests: XCTestCase {
         XCTAssertEqual(videoTracks.count, 1)
         let outputFrameRate = try await videoTracks[0].load(.nominalFrameRate)
         XCTAssertLessThanOrEqual(outputFrameRate, 30.1)
+        let optionalOutputDetails = await MediaTechnicalDetails.read(from: outputURL, kind: .videoFile)
+        let outputDetails = try XCTUnwrap(optionalOutputDetails)
+        XCTAssertNotNil(outputDetails.width)
+        XCTAssertNotNil(outputDetails.height)
+        XCTAssertEqual(outputDetails.videoCodec, "H.264")
+        XCTAssertEqual(outputDetails.audioTrackCount, 0)
         let temporaryFiles = try FileManager.default.contentsOfDirectory(atPath: directory.path)
             .filter { $0.hasPrefix(".dropsqueeze-") }
         XCTAssertTrue(temporaryFiles.isEmpty, "Failed and successful attempts must clean up temporary exports.")
@@ -284,6 +397,10 @@ final class VideoTargetSizeTests: XCTestCase {
     private static func fileSize(at url: URL) throws -> Int64 {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         return (attributes[.size] as? NSNumber)?.int64Value ?? 0
+    }
+
+    private func awaitDetails(from url: URL, kind: HistoryItem.Kind) async -> MediaTechnicalDetails? {
+        await MediaTechnicalDetails.read(from: url, kind: kind)
     }
 
     private func makeTestVideo(at url: URL, width: Int, height: Int, frameCount: Int) throws {
