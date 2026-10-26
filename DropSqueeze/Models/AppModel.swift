@@ -122,12 +122,18 @@ private struct ManualQueueBatch {
 enum ShortcutCompressionError: LocalizedError {
     case batchRequiresPro
     case pdfRequiresPro
+    case selectedProfileUnavailable
+    case selectedFeatureRequiresPro
+    case invalidMaximumSize
     case noSupportedFiles
 
     var errorDescription: String? {
         switch self {
         case .batchRequiresPro: return "快捷指令批量压缩需要 DropSqueeze Pro。"
         case .pdfRequiresPro: return "PDF 压缩需要 DropSqueeze Pro。"
+        case .selectedProfileUnavailable: return "所选压缩配置已删除，请在快捷指令中重新选择。"
+        case .selectedFeatureRequiresPro: return "此压缩配置包含 Pro 功能，请升级后继续。"
+        case .invalidMaximumSize: return "视频最大体积需要设置为 1–5000 MB。"
         case .noSupportedFiles: return "没有生成压缩副本；请检查文件格式或选择更大的输出预设。"
         }
     }
@@ -349,8 +355,8 @@ final class AppModel: ObservableObject {
     }
 
     func applySavedProfile(_ profile: SavedCompressionProfile) {
-        if profile.imageFileOutputFormat == .webP, !purchaseManager.isPro {
-            requestPro(for: .feature(.fileWebPOutput))
+        if let feature = profile.requiredProFeature, !purchaseManager.isPro {
+            requestPro(for: .feature(feature))
             return
         }
         if let type = profile.imageFileOutputFormat.typeIdentifier, !ImageCompressor.encodingAvailable(for: type) {
@@ -750,12 +756,27 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func compressShortcutFiles(_ urls: [URL], videoPreset: VideoOutputPreset) async throws -> [URL] {
+    func compressShortcutFiles(
+        _ urls: [URL],
+        profileIdentifier: String = CompressionProfileReference.currentIdentifier,
+        videoPresetOverride: VideoOutputPreset? = nil,
+        maximumVideoSizeMB: Int? = nil,
+        outputDestination: CompressionOutputDestination = .appDefault
+    ) async throws -> [URL] {
         var seenPaths = Set<String>()
         let validURLs = urls.filter { url in
             url.isFileURL && seenPaths.insert(url.standardizedFileURL.path).inserted
         }
         guard !validURLs.isEmpty else { throw ShortcutCompressionError.noSupportedFiles }
+        guard maximumVideoSizeMB.map({ (1...5_000).contains($0) }) ?? true else {
+            throw ShortcutCompressionError.invalidMaximumSize
+        }
+        let selectedProfile = CompressionProfileReference.isCurrent(profileIdentifier)
+            ? nil
+            : CompressionProfileReference.resolve(profileIdentifier, savedProfiles: settings.savedProfiles)
+        guard CompressionProfileReference.isCurrent(profileIdentifier) || selectedProfile != nil else {
+            throw ShortcutCompressionError.selectedProfileUnavailable
+        }
         await purchaseManager.refreshEntitlements()
         guard validURLs.count == 1 || purchaseManager.isPro else {
             requestPro(for: .batchCompression)
@@ -765,6 +786,28 @@ final class AppModel: ObservableObject {
             requestPro(for: .pdfCompression)
             throw ShortcutCompressionError.pdfRequiresPro
         }
+        let shortcutContainsImage = validURLs.contains { url in
+            ImageCompressor.detectedTypeIdentifier(at: url) != nil
+                || ImageCompressor.typeIdentifier(forFileExtension: url.pathExtension) != nil
+        }
+        let shortcutContainsGIFEligibleVideo = validURLs.contains { $0.pathExtension.lowercased() == "mov" }
+        let selectedImageFormat = selectedProfile?.imageFileOutputFormat ?? settings.imageFileOutputFormat
+        let selectedRetinaDownscale = selectedProfile?.retinaDownscaleEnabled ?? settings.retinaDownscaleEnabled
+        let selectedGIFConversion = selectedProfile?.gifConversionEnabled ?? settings.gifConversionEnabled
+        let requiredFeature: ProFeature? = shortcutContainsImage && selectedImageFormat == .webP
+            ? .fileWebPOutput
+            : (shortcutContainsImage && selectedRetinaDownscale
+                ? .retinaDownscale
+                : (shortcutContainsGIFEligibleVideo && selectedGIFConversion ? .gifConversion : nil))
+        if let feature = requiredFeature, !purchaseManager.isPro {
+            requestPro(for: .feature(feature))
+            throw ShortcutCompressionError.selectedFeatureRequiresPro
+        }
+        if shortcutContainsImage,
+           let typeIdentifier = selectedImageFormat.typeIdentifier,
+           !ImageCompressor.encodingAvailable(for: typeIdentifier) {
+            throw ShortcutCompressionError.noSupportedFiles
+        }
 
         var outcomes: [FileCompressionOutcome] = []
         for url in validURLs {
@@ -773,7 +816,10 @@ final class AppModel: ObservableObject {
                 source: .shortcut,
                 reportStatus: false,
                 notifyOnSuccess: false,
-                videoPresetOverride: videoPreset
+                videoPresetOverride: videoPresetOverride,
+                profileOverride: selectedProfile,
+                maximumVideoSizeMBOverride: maximumVideoSizeMB,
+                outputDestinationOverride: outputDestination
             ) {
                 outcomes.append(outcome)
             }
@@ -781,6 +827,10 @@ final class AppModel: ObservableObject {
         guard !outcomes.isEmpty else { throw ShortcutCompressionError.noSupportedFiles }
         notifyFileCompression(outcomes)
         return outcomes.map(\.outputURL)
+    }
+
+    func shortcutProfile(identifier: String) -> SavedCompressionProfile? {
+        CompressionProfileReference.resolve(identifier, savedProfiles: settings.savedProfiles)
     }
 
     func requestPro(for reason: PaywallReason) {
@@ -1050,6 +1100,9 @@ final class AppModel: ObservableObject {
         videoPresetOverride: VideoOutputPreset? = nil,
         securityScopeURL: URL? = nil,
         outputNameTemplate: String? = nil,
+        profileOverride: SavedCompressionProfile? = nil,
+        maximumVideoSizeMBOverride: Int? = nil,
+        outputDestinationOverride: CompressionOutputDestination? = nil,
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async -> FileCompressionOutcome? {
         guard url.isFileURL else { return nil }
@@ -1067,11 +1120,12 @@ final class AppModel: ObservableObject {
             requestPro(for: .pdfCompression)
             return nil
         }
-        if requiresOutputFolderAuthorization {
+        if requiresOutputFolderAuthorization, outputDestinationOverride != .sameAsSource {
             if reportStatus { statusMessage = "压缩结果文件夹无法访问，请重新选择保存位置" }
             return nil
         }
-        if isImage, settings.imageFileOutputFormat == .webP, !purchaseManager.isPro {
+        let selectedImageOutputFormat = profileOverride?.imageFileOutputFormat ?? settings.imageFileOutputFormat
+        if isImage, selectedImageOutputFormat == .webP, !purchaseManager.isPro {
             if reportStatus { statusMessage = "文件图片输出 WebP 需要 DropSqueeze Pro" }
             requestPro(for: .feature(.fileWebPOutput))
             return nil
@@ -1106,8 +1160,12 @@ final class AppModel: ObservableObject {
         let scopedSourceURL = securityScopeURL ?? url
         let startedAccess = scopedSourceURL.startAccessingSecurityScopedResource()
         defer { if startedAccess { scopedSourceURL.stopAccessingSecurityScopedResource() } }
-        let scopedOutputFolder = outputFolderURL
-        let outputDirectory = scopedOutputFolder ?? url.deletingLastPathComponent()
+        let selectedOutputDestination = outputDestinationOverride ?? .appDefault
+        let scopedOutputFolder = selectedOutputDestination == .appDefault ? outputFolderURL : nil
+        let outputDirectory = selectedOutputDestination.resolveDirectory(
+            configuredOutputFolder: scopedOutputFolder,
+            sourceURL: url
+        )
         let startedOutputAccess = scopedOutputFolder?.startAccessingSecurityScopedResource() ?? false
         defer { if startedOutputAccess { scopedOutputFolder?.stopAccessingSecurityScopedResource() } }
         if scopedOutputFolder != nil {
@@ -1160,7 +1218,19 @@ final class AppModel: ObservableObject {
                 originalSize = compressed.originalByteCount
                 resultSize = compressed.resultByteCount
             } else if isImage {
-                let options = settings.fileImageOptions
+                let options: ImageCompressionOptions
+                if let profileOverride {
+                    options = ImageCompressionOptions(
+                        resizeRetinaTo1x: profileOverride.retinaDownscaleEnabled ?? settings.retinaDownscaleEnabled,
+                        outputWebP: selectedImageOutputFormat == .webP,
+                        outputTypeIdentifier: selectedImageOutputFormat.typeIdentifier,
+                        maxPixelDimension: profileOverride.imageResizePreset.maxPixelDimension,
+                        jpegQuality: profileOverride.imageQuality,
+                        stripMetadata: profileOverride.stripImageMetadata
+                    )
+                } else {
+                    options = settings.fileImageOptions
+                }
                 guard !options.outputWebP || ImageCompressor.webPEncodingAvailable else {
                     throw ImageCompressionError.webPUnavailable
                 }
@@ -1177,17 +1247,20 @@ final class AppModel: ObservableObject {
                 resultSize = Int64(compressed.data.count)
                 didConvertImageFormat = ImageCompressor.typeIdentifier(forFileExtension: ext) != compressed.typeIdentifier
             } else {
-                if ext == "mov", settings.gifConversionEnabled {
+                let selectedGIFConversion = profileOverride?.gifConversionEnabled ?? settings.gifConversionEnabled
+                if ext == "mov", selectedGIFConversion {
                     outputURL = try await GIFGenerator.generateSmallerGIF(from: url, outputDirectory: outputDirectory)
                 } else {
+                    let selectedVideoProfile = profileOverride
                     outputURL = try await VideoTranscoder.transcodeToSmallerMP4(
                         url,
-                        preset: videoPresetOverride ?? settings.videoOutputPreset,
-                        codec: settings.videoCodecPreference,
-                        bitrateTarget: settings.videoBitrateTarget,
-                        maximumFrameRate: settings.videoFrameRate,
-                        includesAudio: settings.videoIncludesAudio,
-                        maximumSizeMB: settings.videoMaximumSizeMB,
+                        preset: videoPresetOverride ?? selectedVideoProfile?.videoOutputPreset ?? settings.videoOutputPreset,
+                        codec: selectedVideoProfile?.videoCodecPreference ?? settings.videoCodecPreference,
+                        bitrateTarget: selectedVideoProfile?.videoBitrateTarget ?? settings.videoBitrateTarget,
+                        maximumFrameRate: selectedVideoProfile?.videoFrameRate ?? settings.videoFrameRate,
+                        includesAudio: selectedVideoProfile?.videoIncludesAudio ?? settings.videoIncludesAudio,
+                        maximumSizeMB: maximumVideoSizeMBOverride
+                            ?? (selectedVideoProfile == nil ? settings.videoMaximumSizeMB : selectedVideoProfile?.videoMaximumSizeMB),
                         outputDirectory: outputDirectory,
                         cancellation: videoCancellation,
                         onProgress: { [weak self] progress in

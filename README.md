@@ -48,4 +48,4 @@ The app has no account system or analytics backend. Local preferences include mo
 
 ## Finder Quick Action
 
-Create a shortcut in the macOS Shortcuts app, set it to receive files from Finder, add the “压缩媒体文件” DropSqueeze action, and enable “Use as Quick Action.” Run it from Finder’s Quick Actions menu. The action returns compressed copies; it does not replace the selected files.
+Create a shortcut in the macOS Shortcuts app, set it to receive files from Finder, add the “压缩媒体文件” DropSqueeze action, choose a built-in scene or saved profile, and optionally set a video size limit or output location. Enable “Use as Quick Action” to run it from Finder. The action returns compressed copies and never replaces the selected files.

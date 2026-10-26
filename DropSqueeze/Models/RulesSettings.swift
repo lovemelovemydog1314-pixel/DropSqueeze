@@ -347,6 +347,44 @@ enum CompressionScenario: String, CaseIterable, Codable, Identifiable, Sendable 
     }
 }
 
+enum CompressionOutputDestination: String, CaseIterable, Codable, Identifiable, Sendable {
+    case appDefault
+    case sameAsSource
+
+    var id: String { rawValue }
+
+    func resolveDirectory(configuredOutputFolder: URL?, sourceURL: URL) -> URL {
+        if self == .appDefault, let configuredOutputFolder { return configuredOutputFolder }
+        return sourceURL.deletingLastPathComponent()
+    }
+}
+
+enum CompressionProfileReference {
+    static let currentIdentifier = "current"
+
+    static func identifier(for scenario: CompressionScenario) -> String {
+        "scenario:\(scenario.rawValue)"
+    }
+
+    static func identifier(for profile: SavedCompressionProfile) -> String {
+        "saved:\(profile.id.uuidString)"
+    }
+
+    static func isCurrent(_ identifier: String) -> Bool {
+        identifier == currentIdentifier
+    }
+
+    static func resolve(_ identifier: String, savedProfiles: [SavedCompressionProfile]) -> SavedCompressionProfile? {
+        if identifier.hasPrefix("scenario:"),
+           let scenario = CompressionScenario(rawValue: String(identifier.dropFirst("scenario:".count))) {
+            return scenario.profile
+        }
+        guard identifier.hasPrefix("saved:"),
+              let id = UUID(uuidString: String(identifier.dropFirst("saved:".count))) else { return nil }
+        return savedProfiles.first(where: { $0.id == id })
+    }
+}
+
 struct SavedCompressionProfile: Codable, Identifiable, Equatable {
     let id: UUID
     var name: String
@@ -360,11 +398,14 @@ struct SavedCompressionProfile: Codable, Identifiable, Equatable {
     var videoFrameRate: VideoFrameRate
     var videoIncludesAudio: Bool
     var videoMaximumSizeMB: Int?
+    var retinaDownscaleEnabled: Bool?
+    var gifConversionEnabled: Bool?
 
     init(id: UUID = UUID(), name: String, imageResizePreset: ImageResizePreset, imageQuality: Double,
          imageFileOutputFormat: ImageFileOutputFormat, stripImageMetadata: Bool, videoOutputPreset: VideoOutputPreset,
          videoCodecPreference: VideoCodecPreference, videoBitrateTarget: VideoBitrateTarget,
-         videoFrameRate: VideoFrameRate, videoIncludesAudio: Bool, videoMaximumSizeMB: Int? = nil) {
+         videoFrameRate: VideoFrameRate, videoIncludesAudio: Bool, videoMaximumSizeMB: Int? = nil,
+         retinaDownscaleEnabled: Bool? = nil, gifConversionEnabled: Bool? = nil) {
         self.id = id
         self.name = name
         self.imageResizePreset = imageResizePreset
@@ -377,6 +418,15 @@ struct SavedCompressionProfile: Codable, Identifiable, Equatable {
         self.videoFrameRate = videoFrameRate
         self.videoIncludesAudio = videoIncludesAudio
         self.videoMaximumSizeMB = videoMaximumSizeMB
+        self.retinaDownscaleEnabled = retinaDownscaleEnabled
+        self.gifConversionEnabled = gifConversionEnabled
+    }
+
+    var requiredProFeature: ProFeature? {
+        if imageFileOutputFormat == .webP { return .fileWebPOutput }
+        if retinaDownscaleEnabled == true { return .retinaDownscale }
+        if gifConversionEnabled == true { return .gifConversion }
+        return nil
     }
 }
 
@@ -571,7 +621,9 @@ final class RulesSettings: ObservableObject {
             videoBitrateTarget: videoBitrateTarget,
             videoFrameRate: videoFrameRate,
             videoIncludesAudio: videoIncludesAudio,
-            videoMaximumSizeMB: videoMaximumSizeMB
+            videoMaximumSizeMB: videoMaximumSizeMB,
+            retinaDownscaleEnabled: retinaDownscaleEnabled,
+            gifConversionEnabled: gifConversionEnabled
         )
         savedProfiles.append(profile)
         persistProfiles()
@@ -589,6 +641,8 @@ final class RulesSettings: ObservableObject {
         setVideoFrameRate(profile.videoFrameRate)
         setVideoIncludesAudio(profile.videoIncludesAudio)
         setVideoMaximumSizeMB(profile.videoMaximumSizeMB)
+        if let enabled = profile.retinaDownscaleEnabled { set(.retinaDownscale, enabled: enabled) }
+        if let enabled = profile.gifConversionEnabled { set(.gifConversion, enabled: enabled) }
     }
 
     func deleteProfile(_ id: UUID) {

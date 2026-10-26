@@ -45,15 +45,112 @@ final class VideoTargetSizeTests: XCTestCase {
 
         let settings = RulesSettings(defaults: defaults)
         settings.setVideoMaximumSizeMB(18)
+        settings.set(.retinaDownscale, enabled: true)
+        settings.set(.gifConversion, enabled: true)
         let profile = try XCTUnwrap(settings.saveCurrentProfile(name: "邮件附件"))
         XCTAssertEqual(profile.videoMaximumSizeMB, 18)
+        XCTAssertEqual(profile.retinaDownscaleEnabled, true)
+        XCTAssertEqual(profile.gifConversionEnabled, true)
 
         settings.setVideoMaximumSizeMB(nil)
+        settings.set(.retinaDownscale, enabled: false)
+        settings.set(.gifConversion, enabled: false)
         settings.apply(profile)
         XCTAssertEqual(settings.videoMaximumSizeMB, 18)
+        XCTAssertTrue(settings.retinaDownscaleEnabled)
+        XCTAssertTrue(settings.gifConversionEnabled)
 
         let reopenedSettings = RulesSettings(defaults: defaults)
         XCTAssertEqual(reopenedSettings.savedProfiles.first?.videoMaximumSizeMB, 18)
+        XCTAssertEqual(reopenedSettings.savedProfiles.first?.retinaDownscaleEnabled, true)
+        XCTAssertEqual(reopenedSettings.savedProfiles.first?.gifConversionEnabled, true)
+    }
+
+    func testLegacySavedProfileWithoutNewOptionalFieldsStillDecodes() throws {
+        let oldProfile = SavedCompressionProfile(
+            name: "旧配置",
+            imageResizePreset: .max1920,
+            imageQuality: 0.8,
+            imageFileOutputFormat: .jpeg,
+            stripImageMetadata: true,
+            videoOutputPreset: .standard720p,
+            videoCodecPreference: .automatic,
+            videoBitrateTarget: .balanced,
+            videoFrameRate: .original,
+            videoIncludesAudio: true
+        )
+        let encoded = try PropertyListEncoder().encode(oldProfile)
+        var legacyDictionary = try XCTUnwrap(
+            PropertyListSerialization.propertyList(from: encoded, format: nil) as? [String: Any]
+        )
+        legacyDictionary.removeValue(forKey: "videoMaximumSizeMB")
+        legacyDictionary.removeValue(forKey: "retinaDownscaleEnabled")
+        legacyDictionary.removeValue(forKey: "gifConversionEnabled")
+        let legacyData = try PropertyListSerialization.data(fromPropertyList: legacyDictionary, format: .binary, options: 0)
+
+        let decoded = try PropertyListDecoder().decode(SavedCompressionProfile.self, from: legacyData)
+        XCTAssertEqual(decoded.name, "旧配置")
+        XCTAssertNil(decoded.videoMaximumSizeMB)
+        XCTAssertNil(decoded.retinaDownscaleEnabled)
+        XCTAssertNil(decoded.gifConversionEnabled)
+    }
+
+    @MainActor
+    func testShortcutProfileReferencesResolveBuiltInsAndSavedProfiles() throws {
+        let scenarioIdentifier = CompressionProfileReference.identifier(for: .emailAttachment)
+        let scenarioProfile = try XCTUnwrap(
+            CompressionProfileReference.resolve(scenarioIdentifier, savedProfiles: [])
+        )
+        XCTAssertEqual(scenarioProfile.name, "邮件附件")
+        XCTAssertEqual(scenarioProfile.videoMaximumSizeMB, nil)
+
+        let suiteName = "DropSqueezeTests.shortcut-profile.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settings = RulesSettings(defaults: defaults)
+        let savedProfile = try XCTUnwrap(settings.saveCurrentProfile(name: "我的分享配置"))
+        let savedIdentifier = CompressionProfileReference.identifier(for: savedProfile)
+        XCTAssertEqual(
+            CompressionProfileReference.resolve(savedIdentifier, savedProfiles: [savedProfile])?.id,
+            savedProfile.id
+        )
+        XCTAssertNil(CompressionProfileReference.resolve("saved:not-a-uuid", savedProfiles: [savedProfile]))
+        XCTAssertTrue(CompressionProfileReference.isCurrent(CompressionProfileReference.currentIdentifier))
+    }
+
+    func testShortcutProfileQueryOffersCurrentAndScenarioChoices() async throws {
+        let query = ShortcutCompressionProfileQuery()
+        let suggestions = try await query.suggestedEntities()
+        let identifiers = Set(suggestions.map(\.id))
+        XCTAssertTrue(identifiers.contains(CompressionProfileReference.currentIdentifier))
+        XCTAssertTrue(identifiers.contains(CompressionProfileReference.identifier(for: .emailAttachment)))
+        XCTAssertTrue(identifiers.contains(CompressionProfileReference.identifier(for: .webPublishing)))
+
+        let selected = try await query.entities(for: [CompressionProfileReference.identifier(for: .emailAttachment)])
+        XCTAssertEqual(selected.map(\.id), [CompressionProfileReference.identifier(for: .emailAttachment)])
+    }
+
+    func testShortcutOutputDestinationSelectsConfiguredOrSourceFolder() {
+        let sourceURL = URL(fileURLWithPath: "/tmp/incoming/clip.mov")
+        let configuredFolder = URL(fileURLWithPath: "/tmp/compressed", isDirectory: true)
+        XCTAssertEqual(
+            CompressionOutputDestination.appDefault.resolveDirectory(
+                configuredOutputFolder: configuredFolder,
+                sourceURL: sourceURL
+            ),
+            configuredFolder
+        )
+        XCTAssertEqual(
+            CompressionOutputDestination.sameAsSource.resolveDirectory(
+                configuredOutputFolder: configuredFolder,
+                sourceURL: sourceURL
+            ),
+            sourceURL.deletingLastPathComponent()
+        )
+        XCTAssertEqual(
+            CompressionOutputDestination.appDefault.resolveDirectory(configuredOutputFolder: nil, sourceURL: sourceURL),
+            sourceURL.deletingLastPathComponent()
+        )
     }
 
     @MainActor
