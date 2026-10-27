@@ -149,6 +149,72 @@ final class VideoTargetSizeTests: XCTestCase {
         XCTAssertLessThan(longestEdge, 1_024)
     }
 
+    func testBatchScannerRecursivelyIncludesSupportedFilesAndDeduplicatesInputs() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DropSqueeze-batch-scan-\(UUID().uuidString)", isDirectory: true)
+        let nestedDirectory = directory.appendingPathComponent("nested", isDirectory: true)
+        let hiddenDirectory = directory.appendingPathComponent(".hidden", isDirectory: true)
+        try FileManager.default.createDirectory(at: nestedDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: hiddenDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let imageURL = directory.appendingPathComponent("image.png")
+        let pdfURL = nestedDirectory.appendingPathComponent("document.pdf")
+        let unsupportedURL = nestedDirectory.appendingPathComponent("notes.txt")
+        let hiddenURL = hiddenDirectory.appendingPathComponent("secret.jpg")
+        for url in [imageURL, pdfURL, unsupportedURL, hiddenURL] { try Data([1]).write(to: url) }
+
+        let expanded = BatchMediaFileScanner.expand([directory, directory])
+        XCTAssertEqual(Set(expanded.map { $0.url.standardizedFileURL.path }), Set([imageURL.path, pdfURL.path]))
+        XCTAssertTrue(expanded.allSatisfy { $0.securityScopeURL.standardizedFileURL == directory.standardizedFileURL })
+        XCTAssertEqual(BatchMediaFileScanner.expand([directory], maximumFiles: 1).count, 1)
+        XCTAssertTrue(BatchMediaFileScanner.expand([directory], maximumFiles: 0).isEmpty)
+        XCTAssertFalse(BatchMediaFileScanner.isSupported(unsupportedURL))
+    }
+
+    func testQueueProfileChoiceSupportsCurrentBuiltInAndSavedProfiles() throws {
+        let savedProfile = SavedCompressionProfile(
+            name: "单项归档",
+            imageResizePreset: .max4096,
+            imageQuality: 0.94,
+            imageFileOutputFormat: .jpeg,
+            stripImageMetadata: false,
+            videoOutputPreset: .high1080p,
+            videoCodecPreference: .automatic,
+            videoBitrateTarget: .highQuality,
+            videoFrameRate: .original,
+            videoIncludesAudio: true
+        )
+        let currentChoice = try XCTUnwrap(QueueProfileChoice.resolve(
+            CompressionProfileReference.currentIdentifier,
+            savedProfiles: [savedProfile]
+        ))
+        XCTAssertNil(currentChoice.profile)
+        XCTAssertEqual(currentChoice.title, "当前设置")
+
+        let builtInChoice = try XCTUnwrap(QueueProfileChoice.resolve(
+            CompressionProfileReference.identifier(for: .emailAttachment),
+            savedProfiles: []
+        ))
+        XCTAssertEqual(builtInChoice.profile?.imageMaximumSizeMB, 10)
+
+        let savedIdentifier = CompressionProfileReference.identifier(for: savedProfile)
+        let savedChoice = try XCTUnwrap(QueueProfileChoice.resolve(savedIdentifier, savedProfiles: [savedProfile]))
+        XCTAssertEqual(savedChoice.profile, savedProfile)
+        XCTAssertNil(QueueProfileChoice.resolve(savedIdentifier, savedProfiles: []), "Queued jobs should reject deleted profiles when selecting a new profile.")
+
+        var job = CompressionQueueJob(
+            id: UUID(),
+            url: URL(fileURLWithPath: "/tmp/photo.png"),
+            securityScopeURL: URL(fileURLWithPath: "/tmp/photo.png"),
+            state: .queued
+        )
+        XCTAssertEqual(job.profileIdentifier, CompressionProfileReference.currentIdentifier)
+        job.profileIdentifier = savedChoice.identifier
+        job.profileOverride = savedChoice.profile
+        XCTAssertEqual(job.profileOverride?.name, "单项归档", "The selected profile snapshot remains attached to its queued item.")
+    }
+
     @MainActor
     func testSavedProfileKeepsCustomMaximumVideoSize() throws {
         let suiteName = "DropSqueezeTests.video-profile.\(UUID().uuidString)"

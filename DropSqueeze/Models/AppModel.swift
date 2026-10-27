@@ -200,6 +200,76 @@ private struct ManualQueueItem {
     let batchID: UUID
     let url: URL
     let securityScopeURL: URL
+    var profileOverride: SavedCompressionProfile? = nil
+}
+
+struct DroppedMediaFile {
+    let url: URL
+    let securityScopeURL: URL
+}
+
+enum BatchMediaFileScanner {
+    static let defaultMaximumFiles = 2_000
+
+    static func expand(_ urls: [URL], maximumFiles: Int = defaultMaximumFiles) -> [DroppedMediaFile] {
+        guard maximumFiles > 0 else { return [] }
+        var results: [DroppedMediaFile] = []
+        var seenPaths = Set<String>()
+
+        for url in urls where url.isFileURL {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { continue }
+            if isDirectory.boolValue {
+                let startedAccess = url.startAccessingSecurityScopedResource()
+                if let enumerator = FileManager.default.enumerator(
+                    at: url,
+                    includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
+                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                ) {
+                    for case let fileURL as URL in enumerator {
+                        if results.count >= maximumFiles { break }
+                        guard isSupported(fileURL),
+                              seenPaths.insert(fileURL.standardizedFileURL.path).inserted else { continue }
+                        results.append(DroppedMediaFile(url: fileURL, securityScopeURL: url))
+                    }
+                }
+                if startedAccess { url.stopAccessingSecurityScopedResource() }
+            } else if isSupported(url), seenPaths.insert(url.standardizedFileURL.path).inserted {
+                results.append(DroppedMediaFile(url: url, securityScopeURL: url))
+            }
+            if results.count >= maximumFiles { break }
+        }
+        return results
+    }
+
+    static func isSupported(_ url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+            return false
+        }
+        let extensionName = url.pathExtension.lowercased()
+        return extensionName == "svg"
+            || ImageCompressor.typeIdentifier(forFileExtension: extensionName) != nil
+            || ImageCompressor.detectedTypeIdentifier(at: url) != nil
+            || ["mov", "mp4", "m4v", "pdf"].contains(extensionName)
+    }
+}
+
+struct QueueProfileChoice: Equatable {
+    let identifier: String
+    let profile: SavedCompressionProfile?
+
+    var title: String { profile?.name ?? "当前设置" }
+
+    static func resolve(_ identifier: String, savedProfiles: [SavedCompressionProfile]) -> QueueProfileChoice? {
+        if CompressionProfileReference.isCurrent(identifier) {
+            return QueueProfileChoice(identifier: identifier, profile: nil)
+        }
+        guard let profile = CompressionProfileReference.resolve(identifier, savedProfiles: savedProfiles) else {
+            return nil
+        }
+        return QueueProfileChoice(identifier: identifier, profile: profile)
+    }
 }
 
 enum CompressionQueueState: String, Identifiable {
@@ -231,6 +301,8 @@ struct CompressionQueueJob: Identifiable {
     var detail: String?
     var startedAt: Date?
     var finishedAt: Date?
+    var profileIdentifier = CompressionProfileReference.currentIdentifier
+    var profileOverride: SavedCompressionProfile?
 }
 
 private struct ManualQueueBatch {
@@ -688,6 +760,19 @@ final class AppModel: ObservableObject {
         updateQueueEstimate()
     }
 
+    func setQueueJobProfile(_ id: UUID, identifier: String) {
+        guard let job = queueJobs.first(where: { $0.id == id }), job.state == .queued else { return }
+        guard let selection = QueueProfileChoice.resolve(identifier, savedProfiles: settings.savedProfiles) else { return }
+
+        updateQueueJob(id) {
+            $0.profileIdentifier = selection.identifier
+            $0.profileOverride = selection.profile
+        }
+        if let index = manualFileQueue.firstIndex(where: { $0.id == id }) {
+            manualFileQueue[index].profileOverride = selection.profile
+        }
+    }
+
     func retryQueueJob(_ id: UUID) {
         guard let job = queueJobs.first(where: { $0.id == id }),
               job.state == .skipped || job.state == .cancelled,
@@ -698,7 +783,8 @@ final class AppModel: ObservableObject {
             id: job.id,
             batchID: batchID,
             url: job.url,
-            securityScopeURL: job.securityScopeURL
+            securityScopeURL: job.securityScopeURL,
+            profileOverride: job.profileOverride
         ))
         updateQueueJob(id) {
             $0.state = .queued
@@ -759,6 +845,7 @@ final class AppModel: ObservableObject {
                 source: .manualDrop,
                 notifyOnSuccess: false,
                 securityScopeURL: item.securityScopeURL,
+                profileOverride: item.profileOverride,
                 onProgress: { [weak self] progress in
                     Task { @MainActor [weak self] in self?.updateQueueProgress(item.id, progress: progress) }
                 }
@@ -783,54 +870,14 @@ final class AppModel: ObservableObject {
         if currentFileName == nil { currentProgress = nil }
     }
 
-    private struct DroppedMediaFile {
-        let url: URL
-        let securityScopeURL: URL
-    }
-
     private func expandDroppedFiles(_ urls: [URL]) -> [DroppedMediaFile] {
-        var results: [DroppedMediaFile] = []
-        var seenPaths = Set<String>()
-        let maximumFiles = 2_000
-
-        for url in urls where url.isFileURL {
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { continue }
-            if isDirectory.boolValue {
-                let startedAccess = url.startAccessingSecurityScopedResource()
-                if let enumerator = FileManager.default.enumerator(
-                    at: url,
-                    includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
-                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
-                ) {
-                    for case let fileURL as URL in enumerator {
-                        if results.count >= maximumFiles { break }
-                        guard isSupportedDroppedFile(fileURL),
-                              seenPaths.insert(fileURL.standardizedFileURL.path).inserted else { continue }
-                        results.append(DroppedMediaFile(url: fileURL, securityScopeURL: url))
-                    }
-                }
-                if startedAccess { url.stopAccessingSecurityScopedResource() }
-            } else if isSupportedDroppedFile(url), seenPaths.insert(url.standardizedFileURL.path).inserted {
-                results.append(DroppedMediaFile(url: url, securityScopeURL: url))
-            }
-            if results.count >= maximumFiles { break }
-        }
-
-        if results.count == maximumFiles {
-            statusMessage = "已加入前 \(maximumFiles) 个支持的文件；超出部分未加入队列"
+        let results = BatchMediaFileScanner.expand(urls)
+        if results.count == BatchMediaFileScanner.defaultMaximumFiles {
+            statusMessage = "已加入前 \(BatchMediaFileScanner.defaultMaximumFiles) 个支持的文件；超出部分未加入队列"
         } else if results.isEmpty {
             statusMessage = "没有找到支持的图片、视频或 PDF 文件"
         }
         return results
-    }
-
-    private func isSupportedDroppedFile(_ url: URL) -> Bool {
-        let extensionName = url.pathExtension.lowercased()
-        return extensionName == "svg"
-            || ImageCompressor.typeIdentifier(forFileExtension: extensionName) != nil
-            || ImageCompressor.detectedTypeIdentifier(at: url) != nil
-            || ["mov", "mp4", "m4v", "pdf"].contains(extensionName)
     }
 
     private func updateQueueJob(_ id: UUID, update: (inout CompressionQueueJob) -> Void) {

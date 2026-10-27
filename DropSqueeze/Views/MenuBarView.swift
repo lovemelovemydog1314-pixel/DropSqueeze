@@ -372,6 +372,38 @@ struct MenuBarView: View {
                         Text(job.state.title)
                             .foregroundStyle(.tertiary)
                             .help(job.detail ?? "")
+                        Menu {
+                            Button("使用当前设置") {
+                                model.setQueueJobProfile(job.id, identifier: CompressionProfileReference.currentIdentifier)
+                            }
+                            Divider()
+                            ForEach(CompressionScenario.allCases) { scenario in
+                                Button(scenario.title) {
+                                    model.setQueueJobProfile(
+                                        job.id,
+                                        identifier: CompressionProfileReference.identifier(for: scenario)
+                                    )
+                                }
+                            }
+                            if !model.settings.savedProfiles.isEmpty {
+                                Divider()
+                                ForEach(model.settings.savedProfiles) { profile in
+                                    Button(profile.name) {
+                                        model.setQueueJobProfile(
+                                            job.id,
+                                            identifier: CompressionProfileReference.identifier(for: profile)
+                                        )
+                                    }
+                                }
+                            }
+                        } label: {
+                            Label(job.profileOverride?.name ?? "当前设置", systemImage: "slider.horizontal.3")
+                                .font(.system(size: 9, weight: .medium))
+                                .lineLimit(1)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .disabled(job.state != .queued)
+                        .help(job.state == .queued ? "为此文件选择单独的压缩配置" : "此文件使用：\(job.profileOverride?.name ?? "当前设置")")
                         if job.state == .queued {
                             Button {
                                 model.removeQueuedJob(job.id)
