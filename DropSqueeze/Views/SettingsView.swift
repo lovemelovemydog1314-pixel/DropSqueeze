@@ -345,6 +345,58 @@ struct SettingsView: View {
                     }
                 }
 
+                // Section: Automation Workflow Recipes
+                settingsCard(title: "自动化流程配方", icon: "arrow.triangle.2.circlepath") {
+                    VStack(alignment: .leading, spacing: 9) {
+                        Text("把监控范围、压缩配置、文件筛选和输出命名保存成可复用配方；在其他监控目录中套用后，保存目录规则即可开始自动处理。")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+
+                        if settings.automationRecipes.isEmpty {
+                            Text("配方会从监控目录规则中创建。添加一个目录并配置规则后，选择「保存为流程配方」。")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        } else {
+                            ForEach(settings.automationRecipes) { recipe in
+                                HStack(alignment: .top, spacing: 8) {
+                                    Image(systemName: recipe.isAvailable(savedProfiles: settings.savedProfiles)
+                                          ? "arrow.triangle.2.circlepath"
+                                          : "exclamationmark.triangle.fill")
+                                        .foregroundStyle(recipe.isAvailable(savedProfiles: settings.savedProfiles)
+                                                         ? Color.accentColor
+                                                         : Color.orange)
+                                        .frame(width: 16)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(recipe.name)
+                                            .font(.system(size: 10.5, weight: .semibold))
+                                        Text(recipe.summary(savedProfiles: settings.savedProfiles))
+                                            .font(.system(size: 9.5))
+                                            .foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    Spacer(minLength: 2)
+                                    Button {
+                                        settings.deleteAutomationRecipe(recipe.id)
+                                    } label: {
+                                        Image(systemName: "trash")
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("删除流程配方")
+                                }
+                                .padding(.vertical, 4)
+                                if recipe.id != settings.automationRecipes.last?.id {
+                                    Divider().opacity(0.3)
+                                }
+                            }
+                            Text("最多保存 \(RulesSettings.maximumAutomationRecipeCount) 个配方。删除配方不会移除已保存到目录的规则。")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+
                 // Section: Monitored Folders
                 settingsCard(title: "文件夹实时自动监控", icon: "folder.badge.eye") {
                     VStack(alignment: .leading, spacing: 10) {
@@ -576,6 +628,8 @@ private struct FolderRuleEditor: View {
     let folder: MonitoredFolder
     @State private var rule: FolderWatchRule
     @State private var maximumSizeText: String
+    @State private var automationRecipeName = ""
+    @State private var automationRecipeFeedback: String?
 
     init(model: AppModel, folder: MonitoredFolder) {
         self.model = model
@@ -587,6 +641,31 @@ private struct FolderRuleEditor: View {
     var body: some View {
         DisclosureGroup("监控规则配置 · \(folder.rule.scope.title)") {
             VStack(alignment: .leading, spacing: 8) {
+                if !model.settings.automationRecipes.isEmpty {
+                    Menu {
+                        ForEach(model.settings.automationRecipes) { recipe in
+                            Button {
+                                guard recipe.isAvailable(savedProfiles: model.settings.savedProfiles) else {
+                                    automationRecipeFeedback = "此配方使用的压缩配置已删除，请先选择可用配置。"
+                                    return
+                                }
+                                rule = recipe.rule
+                                maximumSizeText = recipe.rule.maximumFileSizeMB.map(String.init) ?? ""
+                                automationRecipeFeedback = "已套用「\(recipe.name)」；保存目录规则后生效。"
+                            } label: {
+                                Text(recipe.isAvailable(savedProfiles: model.settings.savedProfiles)
+                                     ? recipe.name
+                                     : "\(recipe.name) · 配置已删除")
+                            }
+                            .disabled(!recipe.isAvailable(savedProfiles: model.settings.savedProfiles))
+                        }
+                    } label: {
+                        Label("套用流程配方", systemImage: "arrow.down.doc")
+                    }
+                    .buttonStyle(.tactile)
+                    .controlSize(.small)
+                }
+
                 Picker("压缩配置", selection: $rule.compressionProfileIdentifier) {
                     if !rule.usesCurrentCompressionProfile,
                        rule.resolvedCompressionProfile(savedProfiles: model.settings.savedProfiles) == nil {
@@ -633,14 +712,24 @@ private struct FolderRuleEditor: View {
                     .font(.system(size: 9.5))
                     .foregroundStyle(.tertiary)
 
+                HStack(spacing: 6) {
+                    TextField("新配方名称", text: $automationRecipeName)
+                        .textFieldStyle(.roundedBorder)
+                    Button("保存为配方") { saveAutomationRecipe() }
+                        .buttonStyle(.tactile)
+                        .controlSize(.small)
+                        .disabled(automationRecipeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                if let automationRecipeFeedback {
+                    Text(automationRecipeFeedback)
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(automationRecipeFeedback.hasPrefix("已") ? .green : .orange)
+                }
+
                 HStack {
                     Spacer()
                     Button("保存此目录规则") {
-                        rule.maximumFileSizeMB = Int(maximumSizeText).flatMap { $0 > 0 ? $0 : nil }
-                        if rule.outputNameTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            rule.outputNameTemplate = "{name}-compressed"
-                        }
-                        model.updateFolderRule(folder.id, rule: rule)
+                        model.updateFolderRule(folder.id, rule: currentRuleForSaving())
                     }
                     .buttonStyle(.tactile)
                     .controlSize(.small)
@@ -649,6 +738,27 @@ private struct FolderRuleEditor: View {
             .padding(.top, 6)
         }
         .font(.system(size: 11))
+    }
+
+    private func currentRuleForSaving() -> FolderWatchRule {
+        var savedRule = rule
+        savedRule.maximumFileSizeMB = Int(maximumSizeText).flatMap { $0 > 0 ? $0 : nil }
+        if savedRule.outputNameTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            savedRule.outputNameTemplate = "{name}-compressed"
+        }
+        return savedRule
+    }
+
+    private func saveAutomationRecipe() {
+        guard let recipe = model.settings.saveAutomationRecipe(
+            name: automationRecipeName,
+            rule: currentRuleForSaving()
+        ) else {
+            automationRecipeFeedback = "无法保存：名称最多 40 字、筛选词最多 80 字、模板最多 120 字；检查压缩配置，配方上限为 \(RulesSettings.maximumAutomationRecipeCount) 个。"
+            return
+        }
+        automationRecipeName = ""
+        automationRecipeFeedback = "已保存流程配方「\(recipe.name)」"
     }
 }
 

@@ -188,6 +188,69 @@ final class VideoTargetSizeTests: XCTestCase {
         XCTAssertFalse(RulesSettings(defaults: defaults).clipboardCollectionEnabled)
     }
 
+    @MainActor
+    func testAutomationWorkflowRecipesPersistUpdateValidateAndDelete() throws {
+        let suiteName = "DropSqueezeTests.workflow-recipes.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let settings = RulesSettings(defaults: defaults)
+        XCTAssertTrue(settings.automationRecipes.isEmpty)
+        var rule = FolderWatchRule(
+            scope: .images,
+            includeSubfolders: true,
+            filenameContains: "  screenshot  ",
+            maximumFileSizeMB: 250,
+            outputNameTemplate: "{name}-{date}",
+            compressionProfileIdentifier: CompressionProfileReference.identifier(for: .emailAttachment)
+        )
+        let recipe = try XCTUnwrap(settings.saveAutomationRecipe(name: "  客户端截图  ", rule: rule))
+        XCTAssertEqual(recipe.name, "客户端截图")
+        XCTAssertEqual(recipe.rule.filenameContains, "screenshot")
+        XCTAssertTrue(recipe.isAvailable(savedProfiles: settings.savedProfiles))
+        XCTAssertTrue(recipe.summary(savedProfiles: settings.savedProfiles).contains("250 MB"))
+
+        let reloaded = RulesSettings(defaults: defaults)
+        XCTAssertEqual(reloaded.automationRecipes, [recipe])
+
+        rule.scope = .videos
+        rule.includeSubfolders = false
+        rule.maximumFileSizeMB = 80
+        let updated = try XCTUnwrap(settings.saveAutomationRecipe(name: "客户端截图", rule: rule))
+        XCTAssertEqual(updated.id, recipe.id, "Saving a recipe with the same name should update it in place.")
+        XCTAssertEqual(settings.automationRecipes.count, 1)
+        XCTAssertEqual(RulesSettings(defaults: defaults).automationRecipes.first?.rule.scope, .videos)
+
+        XCTAssertNil(settings.saveAutomationRecipe(name: "   ", rule: rule))
+        XCTAssertNil(settings.saveAutomationRecipe(name: String(repeating: "长", count: 41), rule: rule))
+        var invalidProfileRule = rule
+        invalidProfileRule.compressionProfileIdentifier = "saved:deleted-profile"
+        XCTAssertNil(settings.saveAutomationRecipe(name: "失效配置", rule: invalidProfileRule))
+        var invalidSizeRule = rule
+        invalidSizeRule.maximumFileSizeMB = 0
+        XCTAssertNil(settings.saveAutomationRecipe(name: "非法体积", rule: invalidSizeRule))
+
+        settings.deleteAutomationRecipe(recipe.id)
+        XCTAssertTrue(settings.automationRecipes.isEmpty)
+        XCTAssertTrue(RulesSettings(defaults: defaults).automationRecipes.isEmpty)
+    }
+
+    @MainActor
+    func testAutomationWorkflowRecipesHaveBoundedLibrary() {
+        let suiteName = "DropSqueezeTests.workflow-recipes-limit.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let settings = RulesSettings(defaults: defaults)
+        for index in 0..<RulesSettings.maximumAutomationRecipeCount {
+            XCTAssertNotNil(settings.saveAutomationRecipe(name: "流程 \(index)", rule: FolderWatchRule()))
+        }
+        XCTAssertEqual(settings.automationRecipes.count, RulesSettings.maximumAutomationRecipeCount)
+        XCTAssertNil(settings.saveAutomationRecipe(name: "额外流程", rule: FolderWatchRule()))
+        XCTAssertNotNil(settings.saveAutomationRecipe(name: "流程 0", rule: FolderWatchRule(scope: .videos)))
+        XCTAssertEqual(settings.automationRecipes.count, RulesSettings.maximumAutomationRecipeCount)
+    }
+
     func testClipboardCollectionBufferKeepsRecentUniqueFileCopiesAndCanClear() {
         var buffer = ClipboardCollectionBuffer()
         let fileA = URL(fileURLWithPath: "/tmp/collection-a.png")

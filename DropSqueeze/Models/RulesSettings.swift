@@ -129,6 +129,43 @@ struct FolderWatchRule: Codable, Equatable {
     }
 }
 
+struct AutomationWorkflowRecipe: Codable, Identifiable, Equatable {
+    let id: UUID
+    var name: String
+    var rule: FolderWatchRule
+    var updatedAt: Date
+
+    init(id: UUID = UUID(), name: String, rule: FolderWatchRule, updatedAt: Date = Date()) {
+        self.id = id
+        self.name = name
+        self.rule = rule
+        self.updatedAt = updatedAt
+    }
+
+    func isAvailable(savedProfiles: [SavedCompressionProfile]) -> Bool {
+        rule.usesCurrentCompressionProfile
+            || rule.resolvedCompressionProfile(savedProfiles: savedProfiles) != nil
+    }
+
+    func summary(savedProfiles: [SavedCompressionProfile]) -> String {
+        let profileName: String
+        if rule.usesCurrentCompressionProfile {
+            profileName = "当前设置"
+        } else {
+            profileName = rule.resolvedCompressionProfile(savedProfiles: savedProfiles)?.name ?? "配置已删除"
+        }
+        var details = [rule.scope.title, profileName]
+        if rule.includeSubfolders { details.append("含子文件夹") }
+        if !rule.filenameContains.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            details.append("文件名包含「\(rule.filenameContains)」")
+        }
+        if let maximumFileSizeMB = rule.maximumFileSizeMB, maximumFileSizeMB > 0 {
+            details.append("≤ \(maximumFileSizeMB) MB")
+        }
+        return details.joined(separator: " · ")
+    }
+}
+
 struct FolderBookmark: Codable, Identifiable {
     let id: UUID
     let path: String
@@ -531,6 +568,8 @@ struct SavedCompressionProfile: Codable, Identifiable, Equatable {
 
 @MainActor
 final class RulesSettings: ObservableObject {
+    static let maximumAutomationRecipeCount = 20
+
     @Published private(set) var clipboardMonitoringEnabled: Bool
     @Published private(set) var clipboardCollectionEnabled: Bool
     @Published private(set) var folderMonitoringEnabled: Bool
@@ -553,6 +592,7 @@ final class RulesSettings: ObservableObject {
     @Published private(set) var completionSoundName: String
     @Published private(set) var hapticFeedbackEnabled: Bool
     @Published private(set) var savedProfiles: [SavedCompressionProfile]
+    @Published private(set) var automationRecipes: [AutomationWorkflowRecipe]
 
     private let defaults: UserDefaults
 
@@ -589,6 +629,12 @@ final class RulesSettings: ObservableObject {
             savedProfiles = profiles
         } else {
             savedProfiles = []
+        }
+        if let data = defaults.data(forKey: "automationWorkflowRecipes"),
+           let recipes = try? PropertyListDecoder().decode([AutomationWorkflowRecipe].self, from: data) {
+            automationRecipes = Array(recipes.prefix(Self.maximumAutomationRecipeCount))
+        } else {
+            automationRecipes = []
         }
     }
 
@@ -794,8 +840,53 @@ final class RulesSettings: ObservableObject {
         persistProfiles()
     }
 
+    @discardableResult
+    func saveAutomationRecipe(name: String, rule: FolderWatchRule) -> AutomationWorkflowRecipe? {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty,
+              trimmedName.count <= 40,
+              rule.filenameContains.count <= 80,
+              rule.maximumFileSizeMB.map({ $0 > 0 }) ?? true,
+              rule.outputNameTemplate.count <= 120,
+              rule.usesCurrentCompressionProfile
+                || rule.resolvedCompressionProfile(savedProfiles: savedProfiles) != nil else { return nil }
+        let normalizedName = trimmedName
+
+        var normalizedRule = rule
+        normalizedRule.filenameContains = rule.filenameContains.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalizedRule.outputNameTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            normalizedRule.outputNameTemplate = "{name}-compressed"
+        }
+        let existingIndex = automationRecipes.firstIndex {
+            $0.name.localizedCaseInsensitiveCompare(normalizedName) == .orderedSame
+        }
+        guard existingIndex != nil || automationRecipes.count < Self.maximumAutomationRecipeCount else { return nil }
+
+        let recipe = AutomationWorkflowRecipe(
+            id: existingIndex.map { automationRecipes[$0].id } ?? UUID(),
+            name: normalizedName,
+            rule: normalizedRule
+        )
+        if let existingIndex {
+            automationRecipes[existingIndex] = recipe
+        } else {
+            automationRecipes.insert(recipe, at: 0)
+        }
+        persistAutomationRecipes()
+        return recipe
+    }
+
+    func deleteAutomationRecipe(_ id: UUID) {
+        automationRecipes.removeAll { $0.id == id }
+        persistAutomationRecipes()
+    }
+
     private func persistProfiles() {
         defaults.set(try? PropertyListEncoder().encode(savedProfiles), forKey: "savedCompressionProfiles")
+    }
+
+    private func persistAutomationRecipes() {
+        defaults.set(try? PropertyListEncoder().encode(automationRecipes), forKey: "automationWorkflowRecipes")
     }
 
     func disableProFeatures() {
