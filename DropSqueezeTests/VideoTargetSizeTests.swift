@@ -4,6 +4,7 @@ import CoreVideo
 import ImageIO
 import PDFKit
 import SwiftUI
+import UniformTypeIdentifiers
 import XCTest
 @testable import DropSqueeze
 
@@ -171,6 +172,79 @@ final class VideoTargetSizeTests: XCTestCase {
         XCTAssertEqual(BatchMediaFileScanner.expand([directory], maximumFiles: 1).count, 1)
         XCTAssertTrue(BatchMediaFileScanner.expand([directory], maximumFiles: 0).isEmpty)
         XCTAssertFalse(BatchMediaFileScanner.isSupported(unsupportedURL))
+    }
+
+    @MainActor
+    func testClipboardCollectionPreferenceIsOptInAndPersists() {
+        let suiteName = "DropSqueezeTests.clipboard-collection.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let settings = RulesSettings(defaults: defaults)
+        XCTAssertFalse(settings.clipboardCollectionEnabled)
+        settings.setClipboardCollectionEnabled(true)
+        XCTAssertTrue(RulesSettings(defaults: defaults).clipboardCollectionEnabled)
+        settings.setClipboardCollectionEnabled(false)
+        XCTAssertFalse(RulesSettings(defaults: defaults).clipboardCollectionEnabled)
+    }
+
+    func testClipboardCollectionBufferKeepsRecentUniqueFileCopiesAndCanClear() {
+        var buffer = ClipboardCollectionBuffer()
+        let fileA = URL(fileURLWithPath: "/tmp/collection-a.png")
+        let fileB = URL(fileURLWithPath: "/tmp/collection-b.png")
+        XCTAssertTrue(buffer.append(.files(urls: [fileA, fileA, fileB], changeCount: 1)))
+        XCTAssertEqual(buffer.items.count, 1)
+        guard case .files(let urls) = buffer.items[0].content else {
+            XCTFail("The clipboard collection should retain copied file URLs.")
+            return
+        }
+        XCTAssertEqual(urls, [fileA, fileB])
+        XCTAssertFalse(buffer.append(.files(urls: [fileA, fileB], changeCount: 2)), "Identical file copies should not create duplicate cards.")
+
+        for index in 0..<(ClipboardCollectionBuffer.maximumItemCount + 3) {
+            let url = URL(fileURLWithPath: "/tmp/collection-\(index).png")
+            XCTAssertTrue(buffer.append(.files(urls: [url], changeCount: index + 3)))
+        }
+        XCTAssertEqual(buffer.items.count, ClipboardCollectionBuffer.maximumItemCount)
+        XCTAssertEqual(buffer.items.first?.displayName, "collection-14.png")
+        XCTAssertEqual(buffer.items.last?.displayName, "collection-3.png")
+        let removedID = try! XCTUnwrap(buffer.items.first?.id)
+        buffer.remove(id: removedID)
+        XCTAssertEqual(buffer.items.count, ClipboardCollectionBuffer.maximumItemCount - 1)
+        buffer.clear()
+        XCTAssertTrue(buffer.items.isEmpty)
+    }
+
+    func testClipboardCollectionBufferCapsImageMemoryAndRestoresClipboardTypes() throws {
+        var buffer = ClipboardCollectionBuffer()
+        let imageType = UTType.png.identifier
+        for index in 0..<5 {
+            let data = Data(repeating: UInt8(index + 1), count: 9 * 1_024 * 1_024)
+            XCTAssertTrue(buffer.append(.image(data: data, typeIdentifier: imageType, changeCount: index)))
+        }
+        XCTAssertEqual(buffer.items.count, 4)
+        XCTAssertEqual(buffer.items.first?.imageData?.first, 5)
+        let rejected = Data(repeating: 1, count: ClipboardCollectionBuffer.maximumImageBytes + 1)
+        XCTAssertFalse(buffer.append(.image(data: rejected, typeIdentifier: imageType, changeCount: 9)))
+
+        let item = try XCTUnwrap(buffer.items.first)
+        let pasteboardItems = item.pasteboardItems()
+        XCTAssertEqual(pasteboardItems.count, 1)
+        XCTAssertEqual(pasteboardItems.first?.data(forType: NSPasteboard.PasteboardType(imageType)), item.imageData)
+        XCTAssertNotNil(pasteboardItems.first?.data(forType: ClipboardMonitor.processedPasteboardType))
+
+        let fileCollectionItem = ClipboardCollectionItem(content: .files(urls: [URL(fileURLWithPath: "/tmp/collect-me.mov")]))
+        let filePasteboardItems = fileCollectionItem.pasteboardItems()
+        XCTAssertEqual(filePasteboardItems.first?.string(forType: .fileURL), URL(fileURLWithPath: "/tmp/collect-me.mov").absoluteString)
+        XCTAssertNotNil(filePasteboardItems.first?.data(forType: ClipboardMonitor.processedPasteboardType))
+
+        var previewBuffer = ClipboardCollectionBuffer()
+        let previewPNG = try makeNoisePNG(width: 640, height: 480)
+        XCTAssertTrue(previewBuffer.append(.image(data: previewPNG, typeIdentifier: imageType, changeCount: 10)))
+        let thumbnailData = try XCTUnwrap(previewBuffer.items.first?.thumbnailData)
+        let thumbnail = try XCTUnwrap(NSImage(data: thumbnailData))
+        XCTAssertLessThanOrEqual(thumbnail.size.width, 128)
+        XCTAssertLessThanOrEqual(thumbnail.size.height, 128)
     }
 
     func testQueueProfileChoiceSupportsCurrentBuiltInAndSavedProfiles() throws {

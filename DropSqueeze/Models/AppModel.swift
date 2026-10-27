@@ -369,6 +369,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var estimatedQueueRemainingSeconds: TimeInterval?
     @Published private(set) var isProcessing = false
     @Published private(set) var canUndoClipboardCompression = false
+    @Published private(set) var clipboardCollectionItems: [ClipboardCollectionItem] = []
     @Published private(set) var isDropZoneVisible = true
     @Published private(set) var dropRequestCount = 0
     @Published private(set) var paywallRequest: PaywallRequest?
@@ -403,6 +404,7 @@ final class AppModel: ObservableObject {
 
     private let defaults = UserDefaults.standard
     private let clipboardMonitor = ClipboardMonitor()
+    private var clipboardCollection = ClipboardCollectionBuffer()
     private let fileProcessingGate = FileProcessingGate()
     private let usageTracker = UsageTracker()
     private var folderBookmarks: [FolderBookmark] = []
@@ -512,14 +514,38 @@ final class AppModel: ObservableObject {
 
     func setClipboardMonitoringEnabled(_ enabled: Bool) {
         settings.setClipboardMonitoringEnabled(enabled)
-        guard didStart else { return }
-        if enabled {
-            configureClipboardMonitor()
-            clipboardMonitor.start()
-        } else {
-            clipboardMonitor.stop()
-            statusMessage = "已暂停剪贴板自动压缩"
+        updateClipboardMonitorState()
+        statusMessage = enabled ? "已开启剪贴板自动压缩" : "已暂停剪贴板自动压缩"
+    }
+
+    func setClipboardCollectionEnabled(_ enabled: Bool) {
+        settings.setClipboardCollectionEnabled(enabled)
+        updateClipboardMonitorState()
+        if enabled, let currentPayload = ClipboardMonitor.currentPayload() {
+            collectClipboardPayload(currentPayload)
         }
+        statusMessage = enabled ? "剪贴板收集栏已开启；内容仅保留到退出应用" : "剪贴板收集已关闭"
+    }
+
+    func copyClipboardCollectionItem(_ item: ClipboardCollectionItem) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        guard pasteboard.writeObjects(item.pasteboardItems()) else {
+            statusMessage = "无法将内容放回剪贴板"
+            return
+        }
+        statusMessage = "已放回剪贴板：\(item.displayName)"
+    }
+
+    func removeClipboardCollectionItem(_ item: ClipboardCollectionItem) {
+        clipboardCollection.remove(id: item.id)
+        clipboardCollectionItems = clipboardCollection.items
+    }
+
+    func clearClipboardCollection() {
+        clipboardCollection.clear()
+        clipboardCollectionItems = []
+        statusMessage = "剪贴板收集栏已清空"
     }
 
     func setFolderMonitoringEnabled(_ enabled: Bool) {
@@ -1112,13 +1138,27 @@ final class AppModel: ObservableObject {
 
     private func activateAutomation() {
         configureClipboardMonitor()
-        if settings.clipboardMonitoringEnabled { clipboardMonitor.start() }
+        if settings.clipboardMonitoringEnabled || settings.clipboardCollectionEnabled { clipboardMonitor.start() }
         restoreFolderWatchers()
+    }
+
+    private func updateClipboardMonitorState() {
+        guard didStart else { return }
+        if settings.clipboardMonitoringEnabled || settings.clipboardCollectionEnabled {
+            configureClipboardMonitor()
+            clipboardMonitor.start()
+        } else {
+            clipboardMonitor.stop()
+        }
     }
 
     private func configureClipboardMonitor() {
         clipboardMonitor.onPayload = { [weak self] payload in
-            Task { @MainActor in self?.enqueueClipboardPayload(payload) }
+            Task { @MainActor in
+                guard let self else { return }
+                if self.settings.clipboardCollectionEnabled { self.collectClipboardPayload(payload) }
+                if self.settings.clipboardMonitoringEnabled { self.enqueueClipboardPayload(payload) }
+            }
         }
         clipboardMonitor.onExternalChange = { [weak self] in
             Task { @MainActor in
@@ -1127,6 +1167,11 @@ final class AppModel: ObservableObject {
                 self?.canUndoClipboardCompression = false
             }
         }
+    }
+
+    private func collectClipboardPayload(_ payload: ClipboardPayload) {
+        guard clipboardCollection.append(payload) else { return }
+        clipboardCollectionItems = clipboardCollection.items
     }
 
     private func filePasteboardItems(for urls: [URL]) -> [NSPasteboardItem] {

@@ -532,6 +532,7 @@ struct SavedCompressionProfile: Codable, Identifiable, Equatable {
 @MainActor
 final class RulesSettings: ObservableObject {
     @Published private(set) var clipboardMonitoringEnabled: Bool
+    @Published private(set) var clipboardCollectionEnabled: Bool
     @Published private(set) var folderMonitoringEnabled: Bool
     @Published private(set) var retinaDownscaleEnabled: Bool
     @Published private(set) var clipboardWebPOutputEnabled: Bool
@@ -558,6 +559,7 @@ final class RulesSettings: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         clipboardMonitoringEnabled = defaults.object(forKey: "clipboardMonitoringEnabled") as? Bool ?? true
+        clipboardCollectionEnabled = defaults.object(forKey: "clipboardCollectionEnabled") as? Bool ?? false
         folderMonitoringEnabled = defaults.object(forKey: "folderMonitoringEnabled") as? Bool ?? true
         retinaDownscaleEnabled = defaults.bool(forKey: "retinaDownscaleEnabled")
         let legacyWebPOutputEnabled = defaults.bool(forKey: "webPOutputEnabled")
@@ -628,6 +630,11 @@ final class RulesSettings: ObservableObject {
     func setClipboardMonitoringEnabled(_ enabled: Bool) {
         clipboardMonitoringEnabled = enabled
         defaults.set(enabled, forKey: "clipboardMonitoringEnabled")
+    }
+
+    func setClipboardCollectionEnabled(_ enabled: Bool) {
+        clipboardCollectionEnabled = enabled
+        defaults.set(enabled, forKey: "clipboardCollectionEnabled")
     }
 
     func setFolderMonitoringEnabled(_ enabled: Bool) {

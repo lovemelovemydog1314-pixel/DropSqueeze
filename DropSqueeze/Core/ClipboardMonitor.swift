@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ImageIO
 import UniformTypeIdentifiers
 
 enum ClipboardPayload {
@@ -9,6 +10,136 @@ enum ClipboardPayload {
     var changeCount: Int {
         switch self {
         case .image(_, _, let changeCount), .files(_, let changeCount): return changeCount
+        }
+    }
+}
+
+enum ClipboardCollectionContent: Equatable {
+    case image(data: Data, typeIdentifier: String)
+    case files(urls: [URL])
+}
+
+struct ClipboardCollectionItem: Identifiable, Equatable {
+    let id: UUID
+    let createdAt: Date
+    let content: ClipboardCollectionContent
+    let thumbnailData: Data?
+
+    init(id: UUID = UUID(), createdAt: Date = Date(), content: ClipboardCollectionContent) {
+        self.id = id
+        self.createdAt = createdAt
+        self.content = content
+        self.thumbnailData = Self.makeThumbnailData(for: content)
+    }
+
+    var displayName: String {
+        switch content {
+        case .image(_, let typeIdentifier):
+            let format = UTType(typeIdentifier)?.preferredFilenameExtension?.uppercased()
+            return format.map { "剪贴板图片 · \($0)" } ?? "剪贴板图片"
+        case .files(let urls):
+            guard let first = urls.first else { return "空文件列表" }
+            return urls.count == 1 ? first.lastPathComponent : "\(first.lastPathComponent) 等 \(urls.count) 个文件"
+        }
+    }
+
+    var detail: String {
+        switch content {
+        case .image(let data, _): return ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
+        case .files(let urls): return "\(urls.count) 个文件"
+        }
+    }
+
+    var imageData: Data? {
+        guard case .image(let data, _) = content else { return nil }
+        return data
+    }
+
+    private static func makeThumbnailData(for content: ClipboardCollectionContent) -> Data? {
+        guard case .image(let data, _) = content,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let sourceType = CGImageSourceGetType(source) as String?,
+              UTType(sourceType)?.conforms(to: .image) == true,
+              let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 128
+              ] as CFDictionary) else { return nil }
+        return NSBitmapImageRep(cgImage: thumbnail).representation(using: .png, properties: [:])
+    }
+
+    var isImage: Bool {
+        if case .image = content { return true }
+        return false
+    }
+
+    func pasteboardItems() -> [NSPasteboardItem] {
+        switch content {
+        case .image(let data, let typeIdentifier):
+            let item = NSPasteboardItem()
+            item.setData(data, forType: NSPasteboard.PasteboardType(typeIdentifier))
+            item.setData(Data([1]), forType: ClipboardMonitor.processedPasteboardType)
+            return [item]
+        case .files(let urls):
+            return urls.map { url in
+                let item = NSPasteboardItem()
+                item.setString(url.absoluteString, forType: .fileURL)
+                item.setData(Data([1]), forType: ClipboardMonitor.processedPasteboardType)
+                return item
+            }
+        }
+    }
+}
+
+struct ClipboardCollectionBuffer {
+    static let maximumItemCount = 12
+    static let maximumImageBytes = 10 * 1_024 * 1_024
+    static let maximumTotalImageBytes = 40 * 1_024 * 1_024
+
+    private(set) var items: [ClipboardCollectionItem] = []
+
+    @discardableResult
+    mutating func append(_ payload: ClipboardPayload, createdAt: Date = Date()) -> Bool {
+        let content: ClipboardCollectionContent
+        switch payload {
+        case .image(let data, let typeIdentifier, _):
+            guard !data.isEmpty, data.count <= Self.maximumImageBytes else { return false }
+            content = .image(data: data, typeIdentifier: typeIdentifier)
+        case .files(let urls, _):
+            let uniqueURLs = Self.uniqueFileURLs(urls)
+            guard !uniqueURLs.isEmpty else { return false }
+            content = .files(urls: uniqueURLs)
+        }
+
+        guard !items.contains(where: { $0.content == content }) else { return false }
+        let item = ClipboardCollectionItem(createdAt: createdAt, content: content)
+        var updated = [item] + items
+        while updated.count > Self.maximumItemCount || Self.totalImageBytes(in: updated) > Self.maximumTotalImageBytes {
+            updated.removeLast()
+        }
+        guard updated.contains(where: { $0.id == item.id }) else { return false }
+        items = updated
+        return true
+    }
+
+    mutating func remove(id: UUID) {
+        items.removeAll { $0.id == id }
+    }
+
+    mutating func clear() {
+        items.removeAll()
+    }
+
+    private static func totalImageBytes(in items: [ClipboardCollectionItem]) -> Int {
+        items.reduce(into: 0) { total, item in
+            if let data = item.imageData { total += data.count }
+        }
+    }
+
+    private static func uniqueFileURLs(_ urls: [URL]) -> [URL] {
+        var seen = Set<String>()
+        return urls.filter { url in
+            url.isFileURL && seen.insert(url.standardizedFileURL.path).inserted
         }
     }
 }
@@ -45,16 +176,27 @@ final class ClipboardMonitor {
         guard pasteboard.availableType(from: [Self.processedPasteboardType]) == nil else { return }
         onExternalChange?()
 
+        if let payload = Self.readPayload(from: pasteboard, changeCount: changeCount) {
+            onPayload?(payload)
+        }
+    }
+
+    static func currentPayload() -> ClipboardPayload? {
+        let pasteboard = NSPasteboard.general
+        guard pasteboard.availableType(from: [processedPasteboardType]) == nil else { return nil }
+        return readPayload(from: pasteboard, changeCount: pasteboard.changeCount)
+    }
+
+    private static func readPayload(from pasteboard: NSPasteboard, changeCount: Int) -> ClipboardPayload? {
         if let fileURLs = pasteboard.readObjects(
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
         ) as? [NSURL], !fileURLs.isEmpty {
-            onPayload?(.files(urls: fileURLs.map { $0 as URL }, changeCount: changeCount))
-            return
+            return .files(urls: fileURLs.map { $0 as URL }, changeCount: changeCount)
         }
 
         guard let items = pasteboard.pasteboardItems, items.count == 1,
-              let item = items.first else { return }
+              let item = items.first else { return nil }
 
         let candidates: [(NSPasteboard.PasteboardType, String)] = [
             (.png, UTType.png.identifier),
@@ -67,9 +209,9 @@ final class ClipboardMonitor {
 
         for (pasteboardType, typeIdentifier) in candidates {
             if let data = item.data(forType: pasteboardType), !data.isEmpty {
-                onPayload?(.image(data: data, typeIdentifier: typeIdentifier, changeCount: changeCount))
-                return
+                return .image(data: data, typeIdentifier: typeIdentifier, changeCount: changeCount)
             }
         }
+        return nil
     }
 }

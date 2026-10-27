@@ -115,6 +115,8 @@ struct MenuBarView: View {
                 // Floating Notch / Drop Zone & Quick Actions
                 quickActionControls
 
+                clipboardCollectionSection
+
                 // Monitored Folder Status
                 watchedFolderCard
 
@@ -298,6 +300,71 @@ struct MenuBarView: View {
             .buttonStyle(.tactile)
             .help("剪辑片段、导出 GIF 或提取音频")
         }
+    }
+
+    private var clipboardCollectionSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("剪贴板收集栏")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("本次会话内存暂存 · 最多 \(ClipboardCollectionBuffer.maximumItemCount) 项，单图 10 MB")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+                Toggle("收集", isOn: Binding(
+                    get: { model.settings.clipboardCollectionEnabled },
+                    set: { model.setClipboardCollectionEnabled($0) }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .fixedSize()
+            }
+
+            if model.settings.clipboardCollectionEnabled && model.clipboardCollectionItems.isEmpty {
+                Label("开启后，复制图片或 Finder 文件即可加入", systemImage: "doc.on.clipboard")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 4)
+            } else if !model.clipboardCollectionItems.isEmpty {
+                HStack {
+                    Text("\(model.clipboardCollectionItems.count) / \(ClipboardCollectionBuffer.maximumItemCount) 项")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("清空") { model.clearClipboardCollection() }
+                        .buttonStyle(.link)
+                        .font(.system(size: 9))
+                }
+
+                ScrollView(.horizontal) {
+                    HStack(spacing: 7) {
+                        ForEach(model.clipboardCollectionItems) { item in
+                            ClipboardCollectionItemCard(
+                                item: item,
+                                onCopy: { model.copyClipboardCollectionItem(item) },
+                                onRemove: { model.removeClipboardCollectionItem(item) }
+                            )
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .scrollIndicators(.hidden)
+                .frame(height: 132)
+            } else {
+                Text("收集已关闭；当前收集项会保留到退出应用或手动清空。")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 4)
+            }
+        }
+        .padding(9)
+        .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.06), lineWidth: 0.75)
+        )
     }
 
     // MARK: - Watched Folder Card
@@ -980,5 +1047,71 @@ private struct VideoQuickEditView: View {
 
     private func timeLabel(_ seconds: Double) -> String {
         String(format: "%0.2f 秒", seconds)
+    }
+}
+
+private struct ClipboardCollectionItemCard: View {
+    let item: ClipboardCollectionItem
+    let onCopy: () -> Void
+    let onRemove: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .top, spacing: 6) {
+                preview
+                    .frame(width: 38, height: 38)
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                Text(item.displayName)
+                    .font(.system(size: 9, weight: .medium))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button(action: onRemove) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("从收集栏移除")
+            }
+
+            Text("\(item.detail) · \(item.createdAt.formatted(date: .omitted, time: .shortened))")
+                .font(.system(size: 8))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+
+            Button(action: onCopy) {
+                Label("放回剪贴板", systemImage: "doc.on.clipboard")
+                    .font(.system(size: 9, weight: .medium))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.mini)
+        }
+        .padding(7)
+        .frame(width: 156, height: 124)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.07), lineWidth: 0.75)
+        )
+    }
+
+    @ViewBuilder
+    private var preview: some View {
+        if let thumbnailData = item.thumbnailData, let image = NSImage(data: thumbnailData) {
+            Image(nsImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.12))
+                Image(systemName: item.isImage ? "photo" : "doc.on.doc")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+            }
+        }
     }
 }
