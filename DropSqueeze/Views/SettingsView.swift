@@ -11,35 +11,22 @@ struct SettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(purchaseManager.isPro ? "DropSqueeze Pro" : "免费版")
-                            .font(.headline)
-                        Text(purchaseManager.isPro
-                             ? "Pro 权限已启用"
-                             : "每日自动额度：图片 15 张 · 视频 3 个")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if !purchaseManager.isPro {
-                        Button("升级 Pro") { model.requestPro(for: .general) }
-                            .buttonStyle(.borderedProminent)
-                    }
-                }
+            VStack(alignment: .leading, spacing: 14) {
+                // Pro Banner Card
+                proStatusHeader
 
-                GroupBox("自动处理") {
-                    VStack(alignment: .leading, spacing: 12) {
+                // Section: Automatic Processing
+                settingsCard(title: "自动静默压缩", icon: "bolt.badge.automatic.fill") {
+                    VStack(alignment: .leading, spacing: 10) {
                         Toggle("自动压缩剪贴板图片", isOn: Binding(
                             get: { settings.clipboardMonitoringEnabled },
                             set: { model.setClipboardMonitoringEnabled($0) }
                         ))
-                        Toggle("自动监控文件夹", isOn: Binding(
+                        Toggle("自动监控指定文件夹", isOn: Binding(
                             get: { settings.folderMonitoringEnabled },
                             set: { model.setFolderMonitoringEnabled($0) }
                         ))
-                        Toggle("压缩完成后显示通知", isOn: Binding(
+                        Toggle("压缩完成后发送系统通知", isOn: Binding(
                             get: { settings.notificationsEnabled },
                             set: { model.setNotificationsEnabled($0) }
                         ))
@@ -47,8 +34,9 @@ struct SettingsView: View {
                             get: { settings.completionSoundEnabled },
                             set: { settings.setCompletionSoundEnabled($0) }
                         ))
+
                         if settings.completionSoundEnabled {
-                            HStack {
+                            HStack(spacing: 8) {
                                 Picker("提示音效", selection: Binding(
                                     get: { CompressionFeedbackSound(rawValue: settings.completionSoundName) ?? .pop },
                                     set: { settings.setCompletionSoundName($0.rawValue) }
@@ -57,71 +45,79 @@ struct SettingsView: View {
                                         Text(sound.title).tag(sound)
                                     }
                                 }
+                                .pickerStyle(.menu)
+
                                 Button {
                                     CompressionFeedbackController.shared.playFeedback(soundName: settings.completionSoundName, haptics: false)
                                 } label: {
                                     Image(systemName: "speaker.wave.2")
+                                        .font(.system(size: 11))
                                 }
-                                .buttonStyle(.borderless)
+                                .buttonStyle(.tactile)
                                 .help("试听此音效")
                             }
+                            .padding(.leading, 18)
                         }
-                        Toggle("启用触觉震动反馈", isOn: Binding(
+
+                        Toggle("启用触觉震动反馈 (Force Touch)", isOn: Binding(
                             get: { settings.hapticFeedbackEnabled },
                             set: { settings.setHapticFeedbackEnabled($0) }
                         ))
-                        Text("每个文件夹可以分别设置媒体类型、递归范围、文件名、大小上限和输出命名。原文件会保留。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("首次显示通知时，macOS 会请求通知权限。")
-                            .font(.caption)
+
+                        Text("DropSqueeze 始终保留原文件并在后台静默输出更小副本；剪贴板处理不会产生冗余文件。")
+                            .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
                 }
 
-                GroupBox("压缩结果") {
+                // Section: Output Directory
+                settingsCard(title: "保存与输出目录", icon: "folder.fill") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Label(
-                            model.requiresOutputFolderAuthorization
-                                ? (model.outputFolderURL?.lastPathComponent ?? "输出文件夹无法访问")
-                                : (model.outputFolderURL?.lastPathComponent ?? "保存到各原文件所在文件夹"),
-                            systemImage: model.outputFolderURL == nil ? "folder" : "folder.fill"
-                        )
-                        .lineLimit(1)
-                        .help(model.outputFolderURL?.path ?? "")
+                        HStack(spacing: 8) {
+                            Image(systemName: model.outputFolderURL == nil ? "folder" : "folder.badge.gearshape")
+                                .foregroundStyle(Color.accentColor)
+                            Text(
+                                model.requiresOutputFolderAuthorization
+                                    ? (model.outputFolderURL?.lastPathComponent ?? "输出文件夹无法访问")
+                                    : (model.outputFolderURL?.lastPathComponent ?? "默认保存到原文件所在同级目录")
+                            )
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
+                        }
+
                         if let outputFolderURL = model.outputFolderURL {
                             Text(outputFolderURL.path)
-                                .font(.caption2)
+                                .font(.system(size: 10))
                                 .foregroundStyle(.tertiary)
                                 .lineLimit(2)
                                 .textSelection(.enabled)
                         }
+
                         if model.requiresOutputFolderAuthorization {
-                            Text("请重新选择此文件夹，或恢复默认位置。")
-                                .font(.caption)
+                            Text("请重新选择此文件夹授权，或恢复默认同级位置。")
+                                .font(.system(size: 10))
                                 .foregroundStyle(.orange)
                         }
-                        HStack {
-                            Button("选择文件夹") { model.chooseOutputFolder() }
-                            Spacer()
+
+                        HStack(spacing: 8) {
+                            Button("更改输出目录") { model.chooseOutputFolder() }
+                                .buttonStyle(.tactile)
+                                .controlSize(.small)
+
                             if model.outputFolderURL != nil || model.requiresOutputFolderAuthorization {
-                                Button("恢复默认") { model.resetOutputFolder() }
-                                    .buttonStyle(.borderless)
+                                Button("恢复默认同级") { model.resetOutputFolder() }
+                                    .buttonStyle(.tactile)
+                                    .controlSize(.small)
                             }
+                            Spacer()
                         }
-                        Text("拖入文件、自动监控和快捷指令共用此位置。原文件始终保留。剪贴板压缩不会生成文件。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
                 }
 
-                GroupBox("视频输出") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Picker("压缩预设", selection: Binding(
+                // Section: Video Transcoding Settings
+                settingsCard(title: "视频压制与静音转码", icon: "film.stack.fill") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Picker("画质预设档位", selection: Binding(
                             get: { settings.videoOutputPreset },
                             set: { model.setVideoOutputPreset($0) }
                         )) {
@@ -129,7 +125,8 @@ struct SettingsView: View {
                                 Text(preset.title).tag(preset)
                             }
                         }
-                        Picker("视频编码", selection: Binding(
+
+                        Picker("视频编码格式", selection: Binding(
                             get: { settings.videoCodecPreference },
                             set: { settings.setVideoCodecPreference($0) }
                         )) {
@@ -137,7 +134,8 @@ struct SettingsView: View {
                                 Text(codec.title).tag(codec)
                             }
                         }
-                        Picker("码率 / 画质目标", selection: Binding(
+
+                        Picker("目标码率品质", selection: Binding(
                             get: { settings.videoBitrateTarget },
                             set: { settings.setVideoBitrateTarget($0) }
                         )) {
@@ -145,7 +143,8 @@ struct SettingsView: View {
                                 Text(target.title).tag(target)
                             }
                         }
-                        Picker("帧率", selection: Binding(
+
+                        Picker("帧率上限限制", selection: Binding(
                             get: { settings.videoFrameRate },
                             set: { settings.setVideoFrameRate($0) }
                         )) {
@@ -153,16 +152,17 @@ struct SettingsView: View {
                                 Text(rate.title).tag(rate)
                             }
                         }
-                        Toggle("保留原视频音频", isOn: Binding(
+
+                        Toggle("保留视频原音频轨道", isOn: Binding(
                             get: { settings.videoIncludesAudio },
                             set: { settings.setVideoIncludesAudio($0) }
                         ))
-                        Text("关闭后转码将剥离音频轨道，可大幅减小录屏体积并消除杂音。")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        HStack {
-                            Text("自定义最大体积")
+
+                        HStack(spacing: 8) {
+                            Text("自定义体积上限")
+                                .font(.system(size: 11))
                             TextField("留空使用预设", text: $videoMaximumSizeText)
+                                .textFieldStyle(.roundedBorder)
                                 .frame(width: 108)
                                 .onAppear {
                                     videoMaximumSizeText = settings.videoMaximumSizeMB.map(String.init) ?? ""
@@ -190,66 +190,79 @@ struct SettingsView: View {
                                     }
                                 }
                             Text("MB")
+                                .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }
-                        Text(settings.videoOutputPreset.detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("自定义体积为 1–5000 MB；填写后会替代预设中的 10/25 MB 上限，输出分辨率仍按当前预设执行。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("H.264 兼容性更广；HEVC 通常更省空间。设置自定义上限后会从原件尝试更低输出档位，并检查实际大小。可设置最高帧率或移除音轨；仍无法达标时会保留原文件并说明原因。")
-                            .font(.caption)
+
+                        Text("关闭保留音频将自动剥离音频音轨，录屏体积可减小 30%–60% 并彻底消除环境杂音。")
+                            .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
                 }
 
-                GroupBox("处理预设与自定义配置") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("预设会更新全局压缩设置，并同时用于拖入文件、剪贴板、监控文件夹和快捷指令。")
-                            .font(.caption)
+                // Section: Preset Scenarios & Profiles
+                settingsCard(title: "平台一键预设与方案", icon: "slider.horizontal.3") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("一键应用符合各主流工作流的硬指标参数配置：")
+                            .font(.system(size: 10.5))
                             .foregroundStyle(.secondary)
+
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), alignment: .leading, spacing: 6) {
                             ForEach(CompressionScenario.allCases) { scenario in
                                 Button(scenario.requiredProFeature == nil ? scenario.title : "\(scenario.title) · Pro") {
                                     model.applyCompressionScenario(scenario)
                                 }
-                                    .buttonStyle(.bordered)
-                                    .help(scenario.detail)
+                                .buttonStyle(.tactile)
+                                .controlSize(.small)
+                                .help(scenario.detail)
                             }
                         }
-                        HStack {
-                            TextField("配置名称", text: $newProfileName)
-                            Button("保存当前设置") {
+
+                        HStack(spacing: 8) {
+                            TextField("方案名称（例如：微信公众号图）", text: $newProfileName)
+                                .textFieldStyle(.roundedBorder)
+                            Button("保存当前配置") {
                                 guard settings.saveCurrentProfile(name: newProfileName) != nil else { return }
                                 newProfileName = ""
                             }
+                            .buttonStyle(.tactile)
+                            .controlSize(.small)
                             .disabled(newProfileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
-                        ForEach(settings.savedProfiles) { profile in
-                            HStack {
-                                Text(profile.name).lineLimit(1)
-                                Spacer()
-                                Button("应用") { model.applySavedProfile(profile) }
-                                Button {
-                                    settings.deleteProfile(profile.id)
-                                } label: {
-                                    Image(systemName: "trash")
+
+                        if !settings.savedProfiles.isEmpty {
+                            VStack(spacing: 4) {
+                                ForEach(settings.savedProfiles) { profile in
+                                    HStack {
+                                        Text(profile.name)
+                                            .font(.system(size: 11, weight: .medium))
+                                            .lineLimit(1)
+                                        Spacer()
+                                        Button("应用") { model.applySavedProfile(profile) }
+                                            .buttonStyle(.tactile)
+                                            .controlSize(.mini)
+                                        Button {
+                                            settings.deleteProfile(profile.id)
+                                        } label: {
+                                            Image(systemName: "trash")
+                                                .font(.system(size: 10))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("删除此配置")
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
                                 }
-                                .buttonStyle(.borderless)
-                                .help("删除此配置")
                             }
-                            .font(.caption)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
                 }
 
-                GroupBox("图片输出") {
-                    VStack(alignment: .leading, spacing: 8) {
+                // Section: Image Compression Strategy
+                settingsCard(title: "图片与动图压缩", icon: "photo.fill") {
+                    VStack(alignment: .leading, spacing: 10) {
                         Picker("文件输出格式", selection: Binding(
                             get: { settings.imageFileOutputFormat },
                             set: { model.setImageFileOutputFormat($0) }
@@ -260,7 +273,8 @@ struct SettingsView: View {
                                     .disabled(format.typeIdentifier.map { !ImageCompressor.encodingAvailable(for: $0) } ?? false)
                             }
                         }
-                        Picker("最长边上限", selection: Binding(
+
+                        Picker("最长边分辨率上限", selection: Binding(
                             get: { settings.imageResizePreset },
                             set: { settings.setImageResizePreset($0) }
                         )) {
@@ -268,111 +282,127 @@ struct SettingsView: View {
                                 Text(preset.title).tag(preset)
                             }
                         }
+
                         HStack(spacing: 10) {
-                            Text("有损编码质量")
+                            Text("有损压缩画质")
+                                .font(.system(size: 11))
                             Slider(value: Binding(
                                 get: { settings.imageQuality },
                                 set: { settings.setImageQuality($0) }
                             ), in: 0.4...0.96, step: 0.04)
                             Text("\(Int(settings.imageQuality * 100))%")
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
                                 .monospacedDigit()
-                                .frame(width: 38, alignment: .trailing)
+                                .frame(width: 36, alignment: .trailing)
                         }
-                        Toggle("移除 EXIF、GPS 与注释信息", isOn: Binding(
+
+                        Toggle("移除 EXIF、GPS 拍摄地点与隐私元数据", isOn: Binding(
                             get: { settings.stripImageMetadata },
                             set: { settings.setStripImageMetadata($0) }
                         ))
-                        Text("输出格式只影响文件图片；选择 JPEG、HEIC、PNG 或 WebP 时会按指定格式生成副本，即使新文件更大也会保留。JPEG 不支持透明背景。动图始终保持 GIF。剪贴板只应用像素上限和质量设置。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("像素上限对剪贴板和文件都生效，并保持长宽比。质量滑块影响 JPEG、HEIC 和 WebP；PNG、TIFF 与 GIF 使用无损像素编码。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+
+                        Text("动图始终保持 GIF 格式；矢量图自动净化无损压缩；剪贴板图片自动同步此质量策略。")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
                 }
 
-                GroupBox("监控文件夹") {
-                    VStack(alignment: .leading, spacing: 8) {
+                // Section: Monitored Folders
+                settingsCard(title: "文件夹实时自动监控", icon: "folder.badge.eye") {
+                    VStack(alignment: .leading, spacing: 10) {
                         if model.monitoredFolders.isEmpty {
-                            Text("尚未添加文件夹")
-                                .font(.caption)
+                            Text("尚未添加监控文件夹。可将系统的「截屏」或「录屏」存放目录加入监控。")
+                                .font(.system(size: 10.5))
                                 .foregroundStyle(.secondary)
                         }
+
                         ForEach(model.monitoredFolders) { folder in
-                            VStack(alignment: .leading, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 6) {
                                 HStack(spacing: 8) {
                                     Image(systemName: model.isFolderWatching(folder) ? "folder.badge.eye" : "folder")
-                                        .foregroundStyle(.secondary)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(folder.displayName).lineLimit(1)
-                                        Text(folder.path).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                                        .foregroundStyle(Color.accentColor)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(folder.displayName)
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .lineLimit(1)
+                                        Text(folder.path)
+                                            .font(.system(size: 9.5))
+                                            .foregroundStyle(.tertiary)
+                                            .lineLimit(1)
                                     }
                                     Spacer(minLength: 4)
                                     Button {
                                         model.removeWatchedFolder(folder)
                                     } label: {
-                                        Image(systemName: "minus.circle")
+                                        Image(systemName: "minus.circle.fill")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(.secondary)
                                     }
                                     .buttonStyle(.plain)
                                     .help("移除此监控文件夹")
                                 }
+
                                 FolderRuleEditor(model: model, folder: folder)
+
                                 if folder.id != model.monitoredFolders.last?.id {
-                                    Divider()
+                                    Divider().opacity(0.3)
                                 }
                             }
                         }
+
                         HStack {
                             Button {
                                 model.chooseWatchedFolder()
                             } label: {
-                                Label("添加文件夹", systemImage: "plus")
+                                Label("添加监控目录", systemImage: "plus")
                             }
+                            .buttonStyle(.tactile)
+                            .controlSize(.small)
 
                             Spacer()
+
                             if !model.monitoredFolders.isEmpty {
-                                Text(model.isWatchingFolder ? "监控中" : "已暂停")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                StatusBadge(
+                                    title: model.isWatchingFolder ? "监控中" : "已暂停",
+                                    color: model.isWatchingFolder ? .green : .secondary,
+                                    isSubtle: true
+                                )
                             }
                         }
+
                         if !purchaseManager.isPro && !model.monitoredFolders.isEmpty {
-                            Text("免费版可监控一个文件夹；添加第二个文件夹需要 Pro。")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            Text("免费版可监控 1 个文件夹；添加更多目录需要 Pro 权限。")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
                 }
 
-                GroupBox("PDF 压缩") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Pro 会优化 PDF 内嵌图片，同时保留文本与矢量内容。加密或带数字签名的 PDF 会跳过；压缩结果另存为副本，原件不变。")
-                            .font(.caption)
+                // Section: PDF & Pro Rules
+                settingsCard(title: "PDF 与 Pro 高级规则", icon: "sparkles") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Pro 可智能重采样优化 PDF 内嵌位图，保留全部矢量文本与表格结构。")
+                            .font(.system(size: 10.5))
                             .foregroundStyle(.secondary)
-                        if !purchaseManager.isPro {
-                            Button("解锁 PDF 压缩") { model.requestPro(for: .pdfCompression) }
-                                .buttonStyle(.bordered)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
-                }
 
-                GroupBox("Pro 规则") {
-                    VStack(alignment: .leading, spacing: 12) {
+                        if !purchaseManager.isPro {
+                            Button("解锁 PDF 高级压缩") { model.requestPro(for: .pdfCompression) }
+                                .buttonStyle(.tactile)
+                                .controlSize(.small)
+                        }
+
+                        Divider().opacity(0.3)
+
                         ForEach(ProFeature.allCases.filter { $0 != .fileWebPOutput }) { feature in
                             Toggle(isOn: Binding(
                                 get: { settings.isEnabled(feature) },
                                 set: { model.setProFeature(feature, enabled: $0) }
                             )) {
-                                VStack(alignment: .leading, spacing: 3) {
+                                VStack(alignment: .leading, spacing: 2) {
                                     Text(feature.title)
+                                        .font(.system(size: 11, weight: .medium))
                                     Text(feature.detail)
-                                        .font(.caption)
+                                        .font(.system(size: 10))
                                         .foregroundStyle(.secondary)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
@@ -382,49 +412,124 @@ struct SettingsView: View {
                                     && !ImageCompressor.webPEncodingAvailable
                             )
                         }
-                        if !ImageCompressor.webPEncodingAvailable {
-                            Text("当前系统版本不提供 WebP 编码，升级 macOS 后可用。")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
                 }
 
-                GroupBox("Finder 与快捷指令") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("在 macOS「快捷指令」中添加“压缩媒体文件”动作，可把选中的图片或视频压缩后作为新文件返回。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("要从 Finder 使用：新建快捷指令，启用“用作快速操作”，接收 Finder 文件并添加 DropSqueeze 动作。原文件会保留。")
-                            .font(.caption)
+                // Section: Shortcuts & Finder Quick Actions
+                settingsCard(title: "快捷指令与 Finder 联动", icon: "command") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("在 macOS「快捷指令」中可直接调用“压缩媒体文件”动作；在 Finder 中右键快速操作亦可一键调用。")
+                            .font(.system(size: 10.5))
                             .foregroundStyle(.secondary)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
                 }
 
-                GroupBox("隐私与数据") {
+                // Section: Privacy & Storage
+                settingsCard(title: "隐私安全与数据保护", icon: "lock.shield.fill") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("媒体处理在本机完成。剪贴板内容、文件和压缩历史不会上传。")
-                            .font(.caption)
+                        Text("所有媒体运算 100% 在 Mac 本地完成；绝不上传任何图片、视频或剪贴板隐私。")
+                            .font(.system(size: 10.5))
                             .foregroundStyle(.secondary)
-                        HStack {
-                            Button("查看隐私说明") { isShowingPrivacy = true }
+
+                        HStack(spacing: 8) {
+                            Button("查看隐私声明") { isShowingPrivacy = true }
+                                .buttonStyle(.tactile)
+                                .controlSize(.small)
+
                             Spacer()
-                            Button("清除本地历史") { model.clearHistory() }
+
+                            Button("清空本地历史记录") { model.clearHistory() }
+                                .buttonStyle(.tactile)
+                                .controlSize(.small)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
                 }
             }
-            .padding(12)
+            .padding(14)
         }
         .sheet(isPresented: $isShowingPrivacy) {
             PrivacyPolicyView()
         }
+    }
+
+    // MARK: - Pro Status Header
+
+    private var proStatusHeader: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(purchaseManager.isPro ? Color.accentColor.opacity(0.2) : Color.white.opacity(0.08))
+                    .frame(width: 32, height: 32)
+                Image(systemName: purchaseManager.isPro ? "checkmark.seal.fill" : "sparkles")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(purchaseManager.isPro ? Color.accentColor : Color.primary)
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(purchaseManager.isPro ? "DropSqueeze Pro 已激活" : "DropSqueeze 免费版")
+                        .font(.system(size: 13, weight: .bold))
+                    if purchaseManager.isPro {
+                        StatusBadge(title: "PRO", color: .accentColor)
+                    }
+                }
+                Text(purchaseManager.isPro
+                     ? "享有无限自动处理、PDF 重采样、多目录监控与全量高级规则"
+                     : "每日免费额度：图片 15 张 · 视频 3 个 · 单目录监控")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if !purchaseManager.isPro {
+                Button("升级 Pro") { model.requestPro(for: .general) }
+                    .buttonStyle(.tactile)
+                    .controlSize(.small)
+            }
+        }
+        .padding(12)
+        .background(
+            purchaseManager.isPro
+                ? Color.accentColor.opacity(0.08)
+                : Color.white.opacity(0.04),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(
+                    purchaseManager.isPro ? Color.accentColor.opacity(0.25) : Color.white.opacity(0.08),
+                    lineWidth: 1
+                )
+        )
+    }
+
+    // MARK: - Reusable Settings Card Container
+
+    @ViewBuilder
+    private func settingsCard<Content: View>(
+        title: String,
+        icon: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                Text(title)
+                    .font(.system(size: 12, weight: .bold))
+            }
+
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+        )
     }
 }
 
@@ -442,7 +547,7 @@ private struct FolderRuleEditor: View {
     }
 
     var body: some View {
-        DisclosureGroup("监控规则 · \(folder.rule.scope.title)") {
+        DisclosureGroup("监控规则配置 · \(folder.rule.scope.title)") {
             VStack(alignment: .leading, spacing: 8) {
                 Picker("压缩配置", selection: $rule.compressionProfileIdentifier) {
                     if !rule.usesCurrentCompressionProfile,
@@ -463,41 +568,49 @@ private struct FolderRuleEditor: View {
                         }
                     }
                 }
-                Picker("处理文件", selection: $rule.scope) {
+                Picker("处理文件类型", selection: $rule.scope) {
                     ForEach(FolderWatchScope.allCases) { scope in
                         Text(scope.title).tag(scope)
                     }
                 }
-                Toggle("包含子文件夹", isOn: $rule.includeSubfolders)
+                Toggle("包含子文件夹 (递归监控)", isOn: $rule.includeSubfolders)
                 TextField("文件名必须包含（可留空）", text: $rule.filenameContains)
+                    .textFieldStyle(.roundedBorder)
+
                 HStack {
-                    Text("最大文件大小 MB")
+                    Text("最大文件大小")
                     TextField("不限", text: $maximumSizeText)
+                        .textFieldStyle(.roundedBorder)
                         .frame(width: 72)
                         .onChange(of: maximumSizeText) { value in
                             let digits = String(value.filter(\.isNumber).prefix(7))
                             if digits != value { maximumSizeText = digits }
                         }
+                    Text("MB")
                 }
-                TextField("输出名称模板：{name}-compressed", text: $rule.outputNameTemplate)
-                Text("可用变量：{name} 原文件名，{date} 日期。原文件会保留。")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+
+                TextField("输出命名模板：{name}-compressed", text: $rule.outputNameTemplate)
+                    .textFieldStyle(.roundedBorder)
+                Text("可用变量：{name} 原文件名，{date} 当前日期。原文件始终保留。")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.tertiary)
+
                 HStack {
                     Spacer()
-                    Button("保存规则") {
+                    Button("保存此目录规则") {
                         rule.maximumFileSizeMB = Int(maximumSizeText).flatMap { $0 > 0 ? $0 : nil }
                         if rule.outputNameTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             rule.outputNameTemplate = "{name}-compressed"
                         }
                         model.updateFolderRule(folder.id, rule: rule)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.tactile)
+                    .controlSize(.small)
                 }
             }
             .padding(.top, 6)
         }
-        .font(.caption)
+        .font(.system(size: 11))
     }
 }
 
@@ -505,34 +618,46 @@ struct PrivacyPolicyView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("隐私说明").font(.title2.weight(.semibold))
+                HStack(spacing: 6) {
+                    Image(systemName: "lock.shield.fill")
+                        .foregroundStyle(Color.accentColor)
+                    Text("隐私安全说明")
+                        .font(.system(size: 16, weight: .bold))
+                }
                 Spacer()
                 Button("完成") { dismiss() }
+                    .buttonStyle(.tactile)
             }
+
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    policySection("本机处理", "图片、视频和剪贴板内容只在 Mac 本机处理。应用不会将这些内容上传到开发者服务器。")
-                    policySection("剪贴板", "启用剪贴板监控后，应用会读取新复制的支持格式图片或文件 URL，以生成更小的本地副本。压缩结果写回剪贴板前会附带内部标记，避免重复处理。")
-                    policySection("文件夹授权", "你选择的文件夹路径和安全书签保存在本机应用偏好设置中，用于在下次启动时恢复监控。你可以在设置中移除文件夹或暂停监控。")
-                    policySection("历史记录", "最近压缩项目、文件名和节省空间统计保存在本机。使用“清除本地历史”可删除最近项目记录；累计节省统计会保留。")
-                    policySection("购买", "购买和恢复由 Apple App Store 处理。应用读取 StoreKit 返回的商品和已验证购买权限，不接收支付卡信息。")
-                    Text("隐私说明版本：2026 年 10 月 26 日")
-                        .font(.caption2)
+                VStack(alignment: .leading, spacing: 14) {
+                    policySection("100% Mac 本地运算", "所有图片有损/无损压缩、视频硬件编码、Vision 端侧 OCR 提取及剪贴板处理全部在您的 Mac 本机完成，不会向开发者或任何第三方服务器上传任何字节。")
+                    policySection("剪贴板保护", "启用剪贴板监控后，仅在检测到新复制的图片或媒体 URL 时生成更小副本并置回剪贴板；应用通过内部私有标记防止循环触发。")
+                    policySection("沙盒安全与书签授权", "选择的监控文件夹及输出目录仅在本机通过 App Sandbox 安全作用域书签持久化，您可随时在设置中暂停监控或移除文件夹。")
+                    policySection("购买与权限", "应用内购买通过 Apple StoreKit 2 官方系统框架验证，DropSqueeze 不收集任何支付卡号或 Apple ID 凭证。")
+
+                    Text("隐私协议版本：2026 年 10 月 · 纯端侧零云端架构")
+                        .font(.system(size: 9.5))
                         .foregroundStyle(.tertiary)
+                        .padding(.top, 4)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(18)
+        .padding(20)
         .frame(width: 460, height: 440)
     }
 
     private func policySection(_ title: String, _ body: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.headline)
-            Text(body).font(.callout).foregroundStyle(.secondary)
+            Text(title)
+                .font(.system(size: 12, weight: .bold))
+            Text(body)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

@@ -29,16 +29,30 @@ struct OutputComparisonView: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("压缩前后对比")
-                        .font(.title3.weight(.semibold))
+            // Header Bar
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text("画质与细节对比")
+                            .font(.system(size: 15, weight: .bold))
+                        if item.kind == .imageFile && item.resultBytes >= item.originalBytes {
+                            StatusBadge(title: "格式转换", color: .secondary, isSubtle: true)
+                        } else {
+                            StatusBadge(
+                                title: "节省 \(ByteCountFormatter.string(fromByteCount: item.savedBytes, countStyle: .file))",
+                                systemImage: "sparkles",
+                                color: .accentColor
+                            )
+                        }
+                    }
                     Text(item.name)
-                        .font(.caption)
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+
                 Spacer()
+
                 if isImage && sourceImage != nil && outputImage != nil {
                     Picker("模式", selection: $comparisonMode) {
                         ForEach(ImageComparisonMode.allCases) { mode in
@@ -46,23 +60,17 @@ struct OutputComparisonView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 160)
+                    .frame(width: 170)
                 }
-                if item.kind == .imageFile && item.resultBytes >= item.originalBytes {
-                    Text(item.resultBytes == item.originalBytes
-                         ? "格式转换 · 体积不变"
-                         : "格式转换 · 增加 \(ByteCountFormatter.string(fromByteCount: item.resultBytes - item.originalBytes, countStyle: .file))")
-                        .font(.callout.weight(.medium))
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("节省 \(ByteCountFormatter.string(fromByteCount: item.savedBytes, countStyle: .file))")
-                        .font(.callout.weight(.medium))
-                        .foregroundStyle(.secondary)
-                }
-                Button("完成") { dismiss() }
-                    .keyboardShortcut(.defaultAction)
-            }
 
+                Button("完成") { dismiss() }
+                    .buttonStyle(.tactile)
+                    .keyboardShortcut(.defaultAction)
+                    .controlSize(.regular)
+            }
+            .padding(.bottom, 2)
+
+            // Main Comparison Display
             if isImage && comparisonMode == .split, let sourceImage, let outputImage {
                 SplitImageView(
                     sourceImage: sourceImage,
@@ -75,7 +83,7 @@ struct OutputComparisonView: View {
             } else {
                 HStack(spacing: 14) {
                     comparisonPanel(
-                        title: "原件",
+                        title: "压缩前原件",
                         size: item.originalBytes,
                         details: item.sourceDetails?.summary,
                         image: sourceImage,
@@ -83,7 +91,7 @@ struct OutputComparisonView: View {
                         pdf: sourcePDF
                     )
                     comparisonPanel(
-                        title: "压缩结果",
+                        title: "压缩后结果",
                         size: item.resultBytes,
                         details: item.outputDetails?.summary,
                         image: outputImage,
@@ -94,14 +102,18 @@ struct OutputComparisonView: View {
             }
 
             if isVideo {
-                Text("视频预览默认静音；两侧可分别播放和拖动进度。")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 4) {
+                    Image(systemName: "speaker.slash.fill")
+                        .font(.system(size: 10))
+                    Text("视频预览默认静音；两侧可分别播放和拖动进度条比对关键帧画质。")
+                        .font(.system(size: 11))
+                }
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(18)
-        .frame(width: 820, height: 500)
+        .frame(width: 840, height: 520)
         .onAppear(perform: loadPreviews)
         .onDisappear(perform: releaseAccess)
     }
@@ -117,43 +129,54 @@ struct OutputComparisonView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(title).font(.headline)
+                Text(title)
+                    .font(.system(size: 13, weight: .bold))
                 Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
+                VStack(alignment: .trailing, spacing: 1) {
                     Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
-                        .font(.caption.monospacedDigit())
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
                         .foregroundStyle(.secondary)
                     if let details, !details.isEmpty {
                         Text(details)
-                            .font(.caption2)
+                            .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
                 }
             }
-            Group {
-                if let player {
-                    VideoPlayer(player: player)
-                } else if let pdf {
-                    PDFDocumentPreview(document: pdf)
-                } else if let image {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .padding(8)
-                } else {
-                    VStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.title2)
-                        Text("无法预览")
-                            .font(.callout)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.black.opacity(0.2))
+
+                Group {
+                    if let player {
+                        VideoPlayer(player: player)
+                    } else if let pdf {
+                        PDFDocumentPreview(document: pdf)
+                    } else if let image {
+                        Image(nsImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .padding(8)
+                    } else {
+                        VStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle")
+                                .font(.title2)
+                            Text("无法预览")
+                                .font(.callout)
+                        }
+                        .foregroundStyle(.secondary)
                     }
-                    .foregroundStyle(.secondary)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+            )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -233,70 +256,107 @@ struct SplitImageView: View {
 
                 // Divider line
                 Rectangle()
-                    .fill(Color.white.opacity(0.9))
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.1),
+                                Color.white.opacity(0.95),
+                                Color.white.opacity(0.1)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
                     .frame(width: 2)
-                    .shadow(color: .black.opacity(0.4), radius: 2)
+                    .shadow(color: .black.opacity(0.5), radius: 3)
                     .position(x: dividerX, y: height / 2)
 
-                // Draggable handle
+                // Draggable handle with glass & specular stroke
                 Circle()
                     .fill(.ultraThinMaterial)
-                    .frame(width: 32, height: 32)
-                    .overlay(Circle().stroke(Color.white.opacity(0.9), lineWidth: 1.5))
+                    .frame(width: 34, height: 34)
+                    .overlay(
+                        Circle()
+                            .stroke(
+                                LinearGradient(
+                                    colors: [Color.white.opacity(0.9), Color.white.opacity(0.3)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                ),
+                                lineWidth: 1.5
+                            )
+                    )
                     .overlay(
                         Image(systemName: "arrow.left.and.right")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(.primary)
                     )
-                    .shadow(color: .black.opacity(0.3), radius: 4)
+                    .shadow(color: .black.opacity(0.4), radius: 6, y: 2)
                     .position(x: dividerX, y: height / 2)
 
-                // Header Badges
+                // Floating Corner Badges
                 VStack {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("原件 · \(ByteCountFormatter.string(fromByteCount: originalBytes, countStyle: .file))")
-                                .font(.caption.weight(.semibold))
+                                .font(.system(size: 11, weight: .bold))
                             if let sourceDetails, !sourceDetails.isEmpty {
                                 Text(sourceDetails)
-                                    .font(.caption2)
+                                    .font(.system(size: 9.5))
                                     .foregroundStyle(.secondary)
                             }
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.75)
+                        )
                         .padding(12)
 
                         Spacer()
 
                         VStack(alignment: .trailing, spacing: 2) {
                             Text("压缩后 · \(ByteCountFormatter.string(fromByteCount: resultBytes, countStyle: .file))")
-                                .font(.caption.weight(.semibold))
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(Color.accentColor)
                             if let outputDetails, !outputDetails.isEmpty {
                                 Text(outputDetails)
-                                    .font(.caption2)
+                                    .font(.system(size: 9.5))
                                     .foregroundStyle(.secondary)
                             }
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.75)
+                        )
                         .padding(12)
                     }
 
                     Spacer()
 
                     Text("左右拖拽滑块对比画质细节 · 双击滑块复位")
-                        .font(.caption2)
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4.5)
                         .background(.ultraThinMaterial, in: Capsule())
-                        .padding(.bottom, 8)
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(Color.white.opacity(0.15), lineWidth: 0.75)
+                        )
+                        .padding(.bottom, 10)
                 }
             }
-            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+            .background(Color.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+            )
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -306,7 +366,7 @@ struct SplitImageView: View {
                     }
             )
             .onTapGesture(count: 2) {
-                withAnimation(.easeInOut(duration: 0.2)) {
+                withAnimation(DesignTokens.smoothSpring) {
                     sliderFraction = 0.5
                 }
             }

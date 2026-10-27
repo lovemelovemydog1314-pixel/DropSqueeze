@@ -11,79 +11,132 @@ struct PaywallView: View {
     private var request: PaywallRequest? { model.paywallRequest }
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 16) {
+            // Top Close Button
             HStack {
                 Spacer()
                 Button(action: onClose) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title3)
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(.secondary)
+                        .frame(width: 22, height: 22)
+                        .background(Color.white.opacity(0.06), in: Circle())
                 }
                 .buttonStyle(.plain)
                 .help("关闭")
             }
 
-            Image(systemName: purchaseManager.isPro ? "checkmark.seal.fill" : "sparkles")
-                .font(.system(size: 36))
-                .foregroundStyle(.tint)
-            Text(purchaseManager.isPro ? "Pro 已解锁" : (request?.reason.title ?? "解锁 DropSqueeze Pro"))
-                .font(.title2.weight(.bold))
-                .multilineTextAlignment(.center)
-            Text(purchaseManager.isPro
-                 ? "感谢支持 DropSqueeze。所有 Pro 规则和无限自动额度现已启用。"
-                 : (request?.reason.detail ?? "解锁无限自动压缩、批量处理、多文件夹监控和高级格式规则。"))
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+            // Hero Brand Badge
+            ZStack {
+                Circle()
+                    .fill(Color.accentColor.opacity(0.18))
+                    .frame(width: 64, height: 64)
+                    .blur(radius: 8)
+
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.accentColor, Color.accentColor.opacity(0.7)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 48, height: 48)
+                    .shadow(color: Color.accentColor.opacity(0.4), radius: 8, y: 3)
+
+                Image(systemName: purchaseManager.isPro ? "checkmark.seal.fill" : "sparkles")
+                    .font(.system(size: 22, weight: .heavy))
+                    .foregroundStyle(.white)
+            }
+
+            // Headline
+            VStack(spacing: 4) {
+                Text(purchaseManager.isPro ? "DropSqueeze Pro 已解锁" : (request?.reason.title ?? "解锁 DropSqueeze Pro"))
+                    .font(.system(size: 18, weight: .heavy, design: .rounded))
+                    .multilineTextAlignment(.center)
+
+                Text(purchaseManager.isPro
+                     ? "感谢支持！所有 Pro 规则、无限自动压缩与多文件夹监控已全部启用。"
+                     : (request?.reason.detail ?? "无限静默压缩、平台硬指标预设、Vision OCR 提取与多文件夹实时监控。"))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 10)
+            }
 
             if !purchaseManager.isPro {
+                // Weekly Savings Banner
                 HStack(spacing: 8) {
-                    Image(systemName: "arrow.down.forward.and.arrow.up.backward")
-                    Text("本周已为你节省")
+                    Image(systemName: "arrow.down.right.and.arrow.up.left")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.accentColor)
+                    Text("本周已为你累计节省")
+                        .font(.system(size: 11, weight: .medium))
                     Spacer()
                     Text(model.formattedSize(request?.weeklySavedBytes ?? model.weeklySavedBytes))
-                        .fontWeight(.semibold)
+                        .font(.system(size: 13, weight: .heavy, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(Color.accentColor)
                 }
-                .font(.callout)
-                .padding(12)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.accentColor.opacity(0.2), lineWidth: 0.75)
+                )
 
+                // Feature Highlights
+                featureHighlightsGrid
+
+                // Product Options List
                 productOptions
 
                 if let status = purchaseManager.statusMessage {
                     Text(status)
-                        .font(.caption)
+                        .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
 
-                Button("恢复购买") {
+                // Restore Button
+                Button {
                     Task { await purchaseManager.restorePurchases() }
+                } label: {
+                    Text("恢复先前购买")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
                 }
+                .buttonStyle(.tactile)
                 .disabled(purchaseManager.isPurchasing)
 
                 if purchaseManager.products.contains(where: { $0.type == .autoRenewable }) {
-                    Text("订阅将按 App Store 页面显示的周期自动续费，可在 Apple ID 订阅设置中随时取消。")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    Text("订阅将按 App Store 页面周期自动续费，可在 Apple ID 订阅管理中随时取消。")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
                         .multilineTextAlignment(.center)
                 }
-                HStack(spacing: 14) {
+
+                // Legal links
+                HStack(spacing: 12) {
                     if let termsURL = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/") {
-                        Link("使用条款", destination: termsURL)
+                        Link("使用条款 (EULA)", destination: termsURL)
                     }
-                    Button("隐私政策") { isShowingPrivacy = true }
+                    Text("·").foregroundStyle(.tertiary)
+                    Button("隐私安全声明") { isShowingPrivacy = true }
                         .buttonStyle(.plain)
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(Color.accentColor)
                 }
-                .font(.caption2)
+                .font(.system(size: 10))
             } else {
+                Spacer()
                 Button("完成") { onClose() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.tactile)
+                    .controlSize(.regular)
             }
         }
-        .padding(24)
-        .frame(width: 440, height: 540)
+        .padding(22)
+        .frame(width: 440, height: 560)
         .task {
             await purchaseManager.loadProducts()
             await purchaseManager.refreshEntitlements()
@@ -93,63 +146,112 @@ struct PaywallView: View {
         }
     }
 
+    // MARK: - Feature Highlights Grid
+
+    private var featureHighlightsGrid: some View {
+        HStack(spacing: 8) {
+            featurePill(title: "无限静默压缩", icon: "infinity")
+            featurePill(title: "录屏静音压制", icon: "speaker.slash.fill")
+            featurePill(title: "端侧 OCR 提取", icon: "text.viewfinder")
+            featurePill(title: "多目录自动监控", icon: "folder.badge.gearshape")
+        }
+    }
+
+    private func featurePill(title: String, icon: String) -> some View {
+        VStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color.accentColor)
+            Text(title)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.06), lineWidth: 0.75)
+        )
+    }
+
+    // MARK: - Product Options
+
     @ViewBuilder
     private var productOptions: some View {
         if purchaseManager.isLoadingProducts {
             ProgressView("正在读取 App Store 商品…")
+                .font(.system(size: 11))
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
+                .padding(.vertical, 12)
         } else if purchaseManager.products.isEmpty {
-            VStack(spacing: 8) {
+            VStack(spacing: 6) {
                 Text(purchaseManager.statusMessage ?? "当前没有可用的 Pro 商品。")
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                Button("重新加载") { Task { await purchaseManager.retryLoadingProducts() } }
+                Button("重新连接") { Task { await purchaseManager.retryLoadingProducts() } }
+                    .buttonStyle(.tactile)
+                    .controlSize(.small)
                     .disabled(purchaseManager.isPurchasing)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
         } else {
-            VStack(spacing: 9) {
+            VStack(spacing: 8) {
                 ForEach(purchaseManager.products) { product in
                     Button {
                         Task { await purchaseManager.purchase(product) }
                     } label: {
                         HStack(spacing: 10) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(product.displayName).fontWeight(.semibold)
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(product.displayName)
+                                        .font(.system(size: 12, weight: .bold))
+                                    if product.type == .nonConsumable {
+                                        StatusBadge(title: "终身买断", color: .accentColor, isSubtle: true)
+                                    }
+                                }
                                 Text(product.description)
-                                    .font(.caption)
+                                    .font(.system(size: 10))
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
                                 Text(billingDescription(for: product))
-                                    .font(.caption2.weight(.medium))
-                                    .foregroundStyle(.secondary)
+                                    .font(.system(size: 9.5, weight: .medium))
+                                    .foregroundStyle(.tertiary)
                             }
                             Spacer(minLength: 6)
-                            Text(product.displayPrice).fontWeight(.bold)
+                            Text(product.displayPrice)
+                                .font(.system(size: 14, weight: .heavy, design: .rounded))
+                                .monospacedDigit()
                         }
-                        .padding(12)
-                        .contentShape(RoundedRectangle(cornerRadius: 10))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(
+                                    Color.accentColor.opacity(product.type == .nonConsumable ? 0.6 : 0.25),
+                                    lineWidth: 1
+                                )
+                        )
                     }
-                    .buttonStyle(.plain)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 10)
-                            .strokeBorder(Color.accentColor.opacity(product.type == .nonConsumable ? 0.6 : 0.25), lineWidth: 1)
-                    }
+                    .buttonStyle(.tactile)
                     .disabled(purchaseManager.isPurchasing)
                 }
             }
+
             if purchaseManager.isPurchasing {
-                ProgressView("正在处理购买…").controlSize(.small)
+                ProgressView("正在安全处理购买…")
+                    .font(.system(size: 10))
+                    .controlSize(.small)
             }
         }
     }
 
     private func billingDescription(for product: Product) -> String {
-        guard product.type == .autoRenewable else { return "一次购买，不会续费" }
+        guard product.type == .autoRenewable else { return "一次性买断，终生使用" }
         guard let period = product.subscription?.subscriptionPeriod else {
             return "自动续费周期以 App Store 商品页面为准"
         }
@@ -174,7 +276,7 @@ final class PaywallWindowController: NSObject, NSWindowDelegate {
     init(model: AppModel) {
         self.model = model
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 440, height: 540),
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 560),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false

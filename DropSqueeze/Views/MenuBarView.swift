@@ -8,21 +8,33 @@ struct MenuBarView: View {
     @State private var isShowingSavingsCard = false
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 0) {
+            // Header Bar
+            headerSection
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+                .padding(.bottom, 10)
+
+            // Segmented Tab Picker
             Picker("页面", selection: $selectedTab) {
                 Text("概览").tag(0)
                 Text("设置").tag(1)
             }
             .pickerStyle(.segmented)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 12)
 
+            Divider()
+                .opacity(0.4)
+
+            // Content Area
             if selectedTab == 0 {
-                overview
+                overviewContent
             } else {
                 SettingsView(model: model, settings: model.settings, purchaseManager: model.purchaseManager)
             }
         }
-        .padding(12)
-        .frame(width: 370, height: 570)
+        .frame(width: 380, height: 580)
         .sheet(item: $selectedComparison) { item in
             OutputComparisonView(item: item)
         }
@@ -31,218 +43,488 @@ struct MenuBarView: View {
         }
     }
 
-    private var overview: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("DropSqueeze").font(.headline)
-                Spacer()
-                if model.purchaseManager.isPro {
-                    Label("Pro", systemImage: "checkmark.seal.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.tint)
+    // MARK: - Header Section
+
+    private var headerSection: some View {
+        HStack(spacing: 9) {
+            ZStack {
+                Circle()
+                    .fill(Color.accentColor.opacity(0.16))
+                    .frame(width: 28, height: 28)
+                Image(systemName: "arrow.down.right.and.arrow.up.left")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Color.accentColor)
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text("DropSqueeze")
+                        .font(.system(size: 14, weight: .bold))
+                    if model.purchaseManager.isPro {
+                        StatusBadge(title: "PRO", systemImage: "sparkles", color: .accentColor)
+                    }
+                }
+                Text(model.purchaseManager.isPro ? "极速静默媒体压缩" : "每日免费额度生效中")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if !model.purchaseManager.isPro {
+                Button {
+                    model.requestPro(for: .general)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("升级 Pro")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    // MARK: - Overview Content
+
+    private var overviewContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                // Live Status / Ongoing Task Card
+                if model.isProcessing || model.currentFileName != nil {
+                    activeProcessingCard
                 } else {
-                    Button("升级 Pro") { model.requestPro(for: .general) }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
+                    idleStatusCard
+                }
+
+                // Metric Hero Stats
+                metricDashboard
+
+                // Floating Notch / Drop Zone & Quick Actions
+                quickActionControls
+
+                // Monitored Folder Status
+                watchedFolderCard
+
+                // Batch Queue (if any)
+                if !model.queueJobs.isEmpty {
+                    queueSection
+                }
+
+                // Recent Compression History
+                if !model.history.isEmpty {
+                    recentHistorySection
+                }
+
+                Spacer(minLength: 4)
+
+                // Footer Quit Bar
+                footerSection
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+        }
+    }
+
+    // MARK: - Active Processing Card
+
+    private var activeProcessingCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("正在静默压缩…")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                if let progress = model.currentProgress {
+                    Text("\(Int(progress * 100))%")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.accentColor)
+                        .monospacedDigit()
                 }
             }
+
+            if let currentFileName = model.currentFileName {
+                Text(currentFileName)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            if let progress = model.currentProgress {
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+                    .tint(.accentColor)
+            }
+        }
+        .padding(10)
+        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.accentColor.opacity(0.2), lineWidth: 1)
+        )
+    }
+
+    // MARK: - Idle Status Card
+
+    private var idleStatusCard: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(Color.green)
+                .frame(width: 7, height: 7)
+                .shadow(color: Color.green.opacity(0.4), radius: 3)
+
             Text(model.statusMessage)
-                .font(.caption)
+                .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
-            if let currentFileName = model.currentFileName {
-                HStack(spacing: 8) {
-                    if let progress = model.currentProgress {
-                        ProgressView(value: progress)
-                            .progressViewStyle(.linear)
-                    } else {
-                        ProgressView().controlSize(.small)
-                    }
-                    Text(currentFileName)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            if model.isManualQueueRunning {
-                HStack {
-                    Text(queueSummary)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                    Spacer()
-                    Button(model.isManualQueuePaused ? "继续" : "暂停") {
-                        model.isManualQueuePaused ? model.resumeManualQueue() : model.pauseManualQueue()
-                    }
-                    .buttonStyle(.borderless)
-                    .font(.caption2)
-                    Button("停止") { model.stopManualQueue() }
-                        .buttonStyle(.borderless)
-                        .font(.caption2)
-                }
-            }
-            if !model.queueJobs.isEmpty {
-                DisclosureGroup("批处理队列 · \(model.queueJobs.filter { $0.state == .queued || $0.state == .processing }.count) 个待处理") {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 4) {
-                            ForEach(model.queueJobs) { job in
-                                HStack(spacing: 6) {
-                                    if job.state == .processing {
-                                        if let progress = job.progress {
-                                            ProgressView(value: progress).frame(width: 34)
-                                        } else {
-                                            ProgressView().controlSize(.mini)
-                                        }
-                                    } else {
-                                        Image(systemName: job.state == .completed ? "checkmark.circle" : "circle")
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Text(job.url.lastPathComponent)
-                                        .lineLimit(1)
-                                    Spacer(minLength: 4)
-                                    Text(job.state.title)
-                                        .foregroundStyle(.tertiary)
-                                        .help(job.detail ?? "")
-                                    if job.state == .queued {
-                                        Button {
-                                            model.removeQueuedJob(job.id)
-                                        } label: {
-                                            Image(systemName: "xmark.circle")
-                                        }
-                                        .buttonStyle(.plain)
-                                        .help("从队列移除")
-                                    } else if job.state == .skipped || job.state == .cancelled {
-                                        Button {
-                                            model.retryQueueJob(job.id)
-                                        } label: {
-                                            Image(systemName: "arrow.clockwise")
-                                        }
-                                        .buttonStyle(.plain)
-                                        .help("重试此文件")
-                                    }
-                                }
-                                .font(.caption2)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(maxHeight: 170)
-                }
-                .font(.caption2)
-            }
 
-            Divider()
+            Spacer()
 
-            LabeledContent("今日已压缩", value: "\(model.todayCompressionCount) 项")
-            HStack {
-                LabeledContent("累计节省", value: model.formattedSize(model.totalSavedBytes))
-                Spacer()
-                Button {
-                    isShowingSavingsCard = true
-                } label: {
-                    Label("成就战报", systemImage: "sparkles")
-                        .font(.caption2.weight(.medium))
+            if model.canUndoClipboardCompression {
+                Button("撤销剪贴板") {
+                    model.undoClipboardCompression()
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.mini)
             }
-            if !model.purchaseManager.isPro {
-                LabeledContent("自动额度", value: "图片 \(model.automaticImageCountToday)/15 · 视频 \(model.automaticVideoCountToday)/3")
-                    .font(.caption)
-            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
 
-            HStack {
-                if model.canUndoClipboardCompression {
-                    Button("撤销剪贴板压缩") { model.undoClipboardCompression() }
-                }
-                Spacer()
-                Button(model.isDropZoneVisible ? "隐藏压缩舱" : "显示压缩舱") { model.toggleDropZone() }
-            }
+    // MARK: - Metric Dashboard
 
-            Divider()
-
+    private var metricDashboard: some View {
+        VStack(spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: model.isWatchingFolder ? "folder.badge.eye" : "folder")
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(model.isWatchingFolder ? "文件夹监控已开启" : "文件夹监控已暂停")
-                        .font(.callout.weight(.medium))
-                    if let path = model.watchedFolderPath {
-                        Text(URL(fileURLWithPath: path).lastPathComponent)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    } else {
-                        Text("在设置中选择截图或录屏文件夹")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                MetricCounterCard(
+                    title: "今日已压缩",
+                    value: "\(model.todayCompressionCount) 项",
+                    subtitle: model.purchaseManager.isPro ? "无限处理" : "剩余充足",
+                    icon: "arrow.down.circle"
+                )
+
+                MetricCounterCard(
+                    title: "累计节省空间",
+                    value: model.formattedSize(model.totalSavedBytes),
+                    subtitle: "本周省 \(model.formattedSize(model.weeklySavedBytes))",
+                    icon: "sparkles",
+                    tintColor: .accentColor
+                )
+            }
+
+            // Achievement Report Action & Free Quota info
+            HStack {
+                if !model.purchaseManager.isPro {
+                    Text("自动额度：图 \(model.automaticImageCountToday)/15 · 视 \(model.automaticVideoCountToday)/3")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
                 }
+
                 Spacer()
-                Button("设置") { selectedTab = 1 }
-                    .buttonStyle(.borderless)
-            }
 
-            if !model.history.isEmpty {
-                Divider()
-                Text("最近压缩")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                ScrollView {
-                    VStack(spacing: 6) {
-                        ForEach(model.history.prefix(10)) { item in
-                            HStack(spacing: 8) {
-                                Image(systemName: icon(for: item.kind))
-                                    .frame(width: 14)
-                                    .foregroundStyle(.secondary)
-                                Text(item.name).lineLimit(1)
-                                Spacer(minLength: 8)
-                                if item.kind == .imageFile && item.resultBytes >= item.originalBytes {
-                                    Text("格式转换")
-                                        .foregroundStyle(.secondary)
-                                } else {
-                                    Text("−\(model.formattedSize(item.savedBytes))")
-                                        .foregroundStyle(.secondary)
-                                }
-                                if item.outputPath != nil {
-                                    Menu {
-                                        Button("打开压缩结果") { model.openOutput(for: item) }
-                                        Button("在 Finder 中显示") { model.revealOutput(for: item) }
-                                        if item.sourcePath != nil {
-                                            Button("对比原件与结果") { selectedComparison = item }
-                                        }
-                                        if item.kind == .imageFile, let path = item.outputPath {
-                                            Button("识别并拷贝文字 (OCR)") {
-                                                Task {
-                                                    let text = await VisionTextExtractor.shared.extractText(from: URL(fileURLWithPath: path))
-                                                    if let text, !text.isEmpty {
-                                                        NSPasteboard.general.clearContents()
-                                                        NSPasteboard.general.setString(text, forType: .string)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    } label: {
-                                        Image(systemName: "ellipsis.circle")
-                                            .foregroundStyle(.tertiary)
-                                    }
-                                    .menuStyle(.borderlessButton)
-                                }
-                            }
-                            .font(.caption)
-                            .help("\(model.formattedSize(item.originalBytes)) → \(model.formattedSize(item.resultBytes))")
-                        }
+                Button {
+                    isShowingSavingsCard = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chart.bar.xaxis")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("成就战报")
+                            .font(.system(size: 11, weight: .semibold))
                     }
-                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3.5)
+                    .background(Color.accentColor.opacity(0.12), in: Capsule())
+                    .foregroundStyle(Color.accentColor)
                 }
-                .frame(maxHeight: 155)
+                .buttonStyle(.tactile)
+                .help("查看并导出可视化省流成就卡片")
             }
-
-            Spacer(minLength: 0)
-            Divider()
-            Button("退出 DropSqueeze") { NSApp.terminate(nil) }
-                .keyboardShortcut("q")
         }
     }
+
+    // MARK: - Quick Action Controls
+
+    private var quickActionControls: some View {
+        HStack(spacing: 8) {
+            // DropZone toggle button
+            Button {
+                model.toggleDropZone()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: model.isDropZoneVisible ? "eye.slash.fill" : "hand.draw.fill")
+                        .font(.system(size: 11))
+                    Text(model.isDropZoneVisible ? "隐藏压缩舱" : "屏幕边缘压缩舱")
+                        .font(.system(size: 11, weight: .medium))
+                    Spacer()
+                    Circle()
+                        .fill(model.isDropZoneVisible ? Color.accentColor : Color.secondary.opacity(0.4))
+                        .frame(width: 6, height: 6)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .frame(maxWidth: .infinity)
+                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(model.isDropZoneVisible ? Color.accentColor.opacity(0.3) : Color.white.opacity(0.06), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.tactile)
+        }
+    }
+
+    // MARK: - Watched Folder Card
+
+    private var watchedFolderCard: some View {
+        HStack(spacing: 9) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.white.opacity(0.06))
+                    .frame(width: 26, height: 26)
+                Image(systemName: model.isWatchingFolder ? "folder.badge.eye" : "folder")
+                    .font(.system(size: 12))
+                    .foregroundStyle(model.isWatchingFolder ? Color.accentColor : Color.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(model.isWatchingFolder ? "文件夹自动监控中" : "文件夹监控已暂停")
+                    .font(.system(size: 11, weight: .semibold))
+                if let path = model.watchedFolderPath {
+                    Text(URL(fileURLWithPath: path).lastPathComponent)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else {
+                    Text("在设置中选择自动监控的截图文件夹")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 4)
+
+            Button("配置") {
+                selectedTab = 1
+            }
+            .buttonStyle(.tactile)
+            .font(.system(size: 10, weight: .medium))
+            .controlSize(.mini)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.06), lineWidth: 0.75)
+        )
+    }
+
+    // MARK: - Batch Queue Section
+
+    private var queueSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("批处理队列 · \(model.queueJobs.filter { $0.state == .queued || $0.state == .processing }.count) 待处理")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if model.isManualQueueRunning {
+                    Button(model.isManualQueuePaused ? "继续" : "暂停") {
+                        model.isManualQueuePaused ? model.resumeManualQueue() : model.pauseManualQueue()
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 10, weight: .medium))
+
+                    Button("停止") { model.stopManualQueue() }
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.red.opacity(0.8))
+                }
+            }
+
+            VStack(spacing: 4) {
+                ForEach(model.queueJobs) { job in
+                    HStack(spacing: 6) {
+                        if job.state == .processing {
+                            if let progress = job.progress {
+                                ProgressView(value: progress).frame(width: 32)
+                            } else {
+                                ProgressView().controlSize(.mini)
+                            }
+                        } else {
+                            Image(systemName: job.state == .completed ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 10))
+                                .foregroundStyle(job.state == .completed ? Color.green : Color.secondary)
+                        }
+                        Text(job.url.lastPathComponent)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(job.state.title)
+                            .foregroundStyle(.tertiary)
+                            .help(job.detail ?? "")
+                        if job.state == .queued {
+                            Button {
+                                model.removeQueuedJob(job.id)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("从队列移除")
+                        } else if job.state == .skipped || job.state == .cancelled {
+                            Button {
+                                model.retryQueueJob(job.id)
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("重试此文件")
+                        }
+                    }
+                    .font(.system(size: 10))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.white.opacity(0.02), in: RoundedRectangle(cornerRadius: 6))
+                }
+            }
+        }
+        .padding(8)
+        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    // MARK: - Recent History Section
+
+    private var recentHistorySection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("最近压缩")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("保留最近 10 项")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+            }
+
+            VStack(spacing: 5) {
+                ForEach(model.history.prefix(10)) { item in
+                    historyRow(for: item)
+                }
+            }
+        }
+    }
+
+    private func historyRow(for item: HistoryItem) -> some View {
+        HStack(spacing: 8) {
+            // Icon Badge
+            ZStack {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(iconBackgroundColor(for: item.kind))
+                    .frame(width: 22, height: 22)
+                Image(systemName: icon(for: item.kind))
+                    .font(.system(size: 10))
+                    .foregroundStyle(iconForegroundColor(for: item.kind))
+            }
+
+            // Name
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.name)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                Text("\(model.formattedSize(item.originalBytes)) → \(model.formattedSize(item.resultBytes))")
+                    .font(.system(size: 9))
+                    .monospacedDigit()
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer(minLength: 6)
+
+            // Saved Badge
+            if item.kind == .imageFile && item.resultBytes >= item.originalBytes {
+                Text("格式转换")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("−\(model.formattedSize(item.savedBytes))")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.accentColor)
+            }
+
+            // Quick Menu
+            if item.outputPath != nil {
+                Menu {
+                    Button("打开压缩结果") { model.openOutput(for: item) }
+                    Button("在 Finder 中显示") { model.revealOutput(for: item) }
+                    if item.sourcePath != nil {
+                        Button("对比原件与结果") { selectedComparison = item }
+                    }
+                    if item.kind == .imageFile, let path = item.outputPath {
+                        Button("识别并拷贝文字 (OCR)") {
+                            Task {
+                                let text = await VisionTextExtractor.shared.extractText(from: URL(fileURLWithPath: path))
+                                if let text, !text.isEmpty {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(text, forType: .string)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 18, height: 18)
+                        .background(Color.white.opacity(0.06), in: Circle())
+                }
+                .menuStyle(.borderlessButton)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .interactiveCard(cornerRadius: 7)
+    }
+
+    // MARK: - Footer Section
+
+    private var footerSection: some View {
+        HStack {
+            Text("DropSqueeze v1.2")
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+
+            Spacer()
+
+            Button {
+                NSApp.terminate(nil)
+            } label: {
+                HStack(spacing: 3) {
+                    Text("退出")
+                    Text("⌘Q")
+                        .foregroundStyle(.secondary)
+                }
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.tactile)
+        }
+        .padding(.top, 4)
+    }
+
+    // MARK: - Helpers
 
     private func icon(for kind: HistoryItem.Kind) -> String {
         switch kind {
@@ -253,11 +535,21 @@ struct MenuBarView: View {
         }
     }
 
-    private var queueSummary: String {
-        if model.isManualQueuePaused { return "队列已暂停" }
-        guard let remaining = model.estimatedQueueRemainingSeconds else {
-            return "排队中还有 \(model.queuedFileCount) 个文件"
+    private func iconBackgroundColor(for kind: HistoryItem.Kind) -> Color {
+        switch kind {
+        case .clipboardImage: return Color.blue.opacity(0.15)
+        case .imageFile: return Color.purple.opacity(0.15)
+        case .videoFile: return Color.orange.opacity(0.15)
+        case .pdfFile: return Color.red.opacity(0.15)
         }
-        return "队列余 \(model.queuedFileCount) 个 · 约 \(max(1, Int(remaining.rounded()))) 秒"
+    }
+
+    private func iconForegroundColor(for kind: HistoryItem.Kind) -> Color {
+        switch kind {
+        case .clipboardImage: return Color.blue
+        case .imageFile: return Color.purple
+        case .videoFile: return Color.orange
+        case .pdfFile: return Color.red
+        }
     }
 }

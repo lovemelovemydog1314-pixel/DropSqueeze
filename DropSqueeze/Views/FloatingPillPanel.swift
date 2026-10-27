@@ -9,7 +9,7 @@ final class FloatingPillPanelController {
 
     init(model: AppModel) {
         self.model = model
-        let size = NSSize(width: 320, height: 52)
+        let size = NSSize(width: 340, height: 56)
         let panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -43,7 +43,7 @@ final class FloatingPillPanelController {
         panel.alphaValue = 0.0
         panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
+            context.duration = 0.22
             panel.animator().alphaValue = 1.0
         }
 
@@ -59,7 +59,7 @@ final class FloatingPillPanelController {
         dismissTimer?.invalidate()
         dismissTimer = nil
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.25
+            context.duration = 0.22
             panel.animator().alphaValue = 0.0
         } completionHandler: { [weak self] in
             self?.panel.orderOut(nil)
@@ -82,41 +82,61 @@ private struct FloatingPillView: View {
     @State private var copiedTextNotice = false
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 10) {
             // Drag source or status icon
             if let url = model.latestOutputURL {
-                Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 26, height: 26)
-                    .background(Color.accentColor.opacity(0.16), in: Circle())
-                    .contentShape(Circle())
-                    .onDrag { NSItemProvider(object: url as NSURL) }
-                    .help("按住此图标直接拖出压缩文件")
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 28, height: 28)
+                        .shadow(color: Color.accentColor.opacity(0.35), radius: 4, y: 1)
+
+                    Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+                .contentShape(Circle())
+                .onDrag { NSItemProvider(object: url as NSURL) }
+                .help("按住此图标直接拖出压缩文件")
             } else {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 18))
-                    .foregroundStyle(Color.green)
+                ZStack {
+                    Circle()
+                        .fill(Color.green.opacity(0.18))
+                        .frame(width: 28, height: 28)
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.green)
+                }
             }
 
+            // Description Info
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
+                HStack(spacing: 5) {
                     Text("压缩完成")
                         .font(.system(size: 11, weight: .bold))
+
                     if let item = model.history.first {
                         Text("−\(model.formattedSize(item.savedBytes))")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .monospacedDigit()
                             .foregroundStyle(Color.accentColor)
                     }
                 }
+
                 if let outputURL = model.latestOutputURL {
-                    Text("可直接拖出 · \(outputURL.lastPathComponent)")
-                        .font(.system(size: 10))
+                    Text("直接拖拽放入微信/邮件 · \(outputURL.lastPathComponent)")
+                        .font(.system(size: 9.5))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 } else {
-                    Text("已替换剪贴板 · Cmd+V 粘贴")
-                        .font(.system(size: 10))
+                    Text("已替换剪贴板 · 按 ⌘V 立即粘贴")
+                        .font(.system(size: 9.5))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -128,18 +148,31 @@ private struct FloatingPillView: View {
             if let recognizedText = model.latestRecognizedText, !recognizedText.isEmpty {
                 Button {
                     model.copyLatestRecognizedText()
-                    copiedTextNotice = true
+                    withAnimation(DesignTokens.quickSpring) {
+                        copiedTextNotice = true
+                    }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        copiedTextNotice = false
+                        withAnimation(DesignTokens.quickSpring) {
+                            copiedTextNotice = false
+                        }
                     }
                 } label: {
-                    Text(copiedTextNotice ? "已拷贝✓" : "拷贝文字")
-                        .font(.system(size: 10, weight: .medium))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(Color.accentColor.opacity(0.18), in: Capsule())
+                    HStack(spacing: 3) {
+                        Image(systemName: copiedTextNotice ? "checkmark" : "text.viewfinder")
+                            .font(.system(size: 9, weight: .bold))
+                        Text(copiedTextNotice ? "已拷贝" : "提取文字")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.accentColor.opacity(0.18), in: Capsule())
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(Color.accentColor.opacity(0.35), lineWidth: 0.75)
+                    )
+                    .foregroundStyle(Color.accentColor)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.tactile)
                 .help("一键复制截图中识别到的纯文本")
             }
 
@@ -148,17 +181,25 @@ private struct FloatingPillView: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.secondary)
-                    .padding(4)
+                    .frame(width: 18, height: 18)
+                    .background(Color.white.opacity(0.06), in: Circle())
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.2), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.28), Color.white.opacity(0.08)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 1
+                )
         )
     }
 }

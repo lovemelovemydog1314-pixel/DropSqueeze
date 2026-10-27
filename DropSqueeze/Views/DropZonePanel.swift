@@ -15,7 +15,7 @@ final class DropZonePanelController {
 
     init(model: AppModel) {
         self.model = model
-        let size = NSSize(width: 340, height: 205)
+        let size = NSSize(width: 350, height: 215)
         let panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -131,7 +131,7 @@ private struct DropZoneView: View {
     @State private var isTargeted = false
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             headerBar
             statusSection
             supportedTypesText
@@ -146,42 +146,77 @@ private struct DropZoneView: View {
                 proBannerSection
             }
         }
-        .padding(.horizontal, 15)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .strokeBorder(isTargeted ? Color.accentColor.opacity(0.8) : Color.white.opacity(0.16), lineWidth: isTargeted ? 2 : 1)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay {
+                    if isTargeted {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Color.accentColor.opacity(0.12))
+                    }
+                }
         }
-        .scaleEffect(isTargeted ? 1.04 : 1)
-        .animation(.easeOut(duration: 0.16), value: isTargeted)
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            isTargeted ? Color.accentColor : Color.white.opacity(0.24),
+                            isTargeted ? Color.accentColor.opacity(0.5) : Color.white.opacity(0.08)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: isTargeted ? 2 : 1
+                )
+        }
+        .scaleEffect(isTargeted ? 1.03 : 1.0)
+        .animation(DesignTokens.quickSpring, value: isTargeted)
         .onDrop(of: [UTType.fileURL], isTargeted: $isTargeted, perform: receiveFiles)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("DropSqueeze 文件压缩区，拖入图片、GIF、PDF、MOV、MP4 或 M4V")
     }
 
+    // MARK: - Subviews
+
     @ViewBuilder
     private var headerBar: some View {
         HStack(spacing: 8) {
-            if model.isProcessing {
-                ProgressView().controlSize(.small)
-            } else {
-                Image(systemName: "arrow.down.to.line.compact")
-                    .font(.system(size: 16, weight: .semibold))
+            ZStack {
+                Circle()
+                    .fill(model.isProcessing ? Color.accentColor.opacity(0.2) : Color.white.opacity(0.08))
+                    .frame(width: 22, height: 22)
+                if model.isProcessing {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "arrow.down.to.line.compact")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(isTargeted ? Color.accentColor : Color.primary)
+                }
             }
-            Text(model.isProcessing ? "正在压缩…" : "DropSqueeze")
-                .font(.system(size: 13, weight: .semibold))
+
+            Text(model.isProcessing ? "正在静默压缩…" : (isTargeted ? "松开立即开始压缩" : "DropSqueeze 压缩舱"))
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(isTargeted ? Color.accentColor : Color.primary)
+
             Spacer(minLength: 4)
+
             if model.canUndoClipboardCompression {
                 Button("撤销") { model.undoClipboardCompression() }
-                    .buttonStyle(.borderless)
-                    .font(.caption.weight(.medium))
+                    .buttonStyle(.tactile)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
             }
+
             Button(action: onClose) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.secondary)
+                    .frame(width: 20, height: 20)
+                    .background(Color.white.opacity(0.05), in: Circle())
             }
             .buttonStyle(.plain)
             .help("隐藏悬浮压缩舱")
@@ -191,29 +226,31 @@ private struct DropZoneView: View {
     @ViewBuilder
     private var statusSection: some View {
         if let currentFileName = model.currentFileName {
-            HStack(spacing: 6) {
-                Text(currentFileName)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                if model.queuedFileCount > 0 {
-                    Text("+\(model.queuedFileCount) 排队")
-                        .foregroundStyle(.tertiary)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(currentFileName)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    if model.queuedFileCount > 0 {
+                        Text("+\(model.queuedFileCount) 排队")
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+
+                if let progress = model.currentProgress {
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+                        .tint(.accentColor)
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
                 }
             }
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
-            if let progress = model.currentProgress {
-                ProgressView(value: progress)
-                    .progressViewStyle(.linear)
-                    .tint(.accentColor)
-            } else {
-                ProgressView()
-                    .controlSize(.small)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
         } else {
-            Text(isTargeted ? "松开以压缩" : model.statusMessage)
+            Text(isTargeted ? "支持多文件批量拖入，后台自动按配置压缩" : model.statusMessage)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -222,15 +259,19 @@ private struct DropZoneView: View {
     }
 
     private var supportedTypesText: some View {
-        Text("拖入图片 · SVG · GIF · PDF · MOV · MP4 · M4V")
-            .font(.system(size: 10))
-            .foregroundStyle(.tertiary)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(spacing: 4) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 8))
+            Text("拖入图片 · SVG · GIF · PDF · MOV · MP4 · M4V")
+                .font(.system(size: 9.5))
+        }
+        .foregroundStyle(.tertiary)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
     private var scenarioAndAudioBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Menu {
                 ForEach(CompressionScenario.allCases) { scenario in
                     Button("\(scenario.title)\(scenario.requiredProFeature == nil ? "" : " · Pro") · \(scenario.detail)") {
@@ -244,9 +285,16 @@ private struct DropZoneView: View {
                     }
                 }
             } label: {
-                Label("预设：\(model.settings.imageResizePreset.title)", systemImage: "slider.horizontal.3")
-                    .font(.system(size: 10, weight: .medium))
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 9))
+                    Text("预设：\(model.settings.imageResizePreset.title)")
+                        .font(.system(size: 10, weight: .medium))
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3.5)
+                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
             .menuStyle(.borderlessButton)
 
@@ -255,11 +303,18 @@ private struct DropZoneView: View {
             Button {
                 model.settings.setVideoIncludesAudio(!model.settings.videoIncludesAudio)
             } label: {
-                Label(
-                    model.settings.videoIncludesAudio ? "保留音频" : "录屏静音",
-                    systemImage: model.settings.videoIncludesAudio ? "speaker.wave.2.fill" : "speaker.slash.fill"
+                HStack(spacing: 4) {
+                    Image(systemName: model.settings.videoIncludesAudio ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                        .font(.system(size: 9))
+                    Text(model.settings.videoIncludesAudio ? "保留音频" : "录屏静音")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3.5)
+                .background(
+                    model.settings.videoIncludesAudio ? Color.white.opacity(0.06) : Color.accentColor.opacity(0.18),
+                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
                 )
-                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(model.settings.videoIncludesAudio ? Color.secondary : Color.accentColor)
             }
             .buttonStyle(.plain)
@@ -287,28 +342,47 @@ private struct DropZoneView: View {
 
     @ViewBuilder
     private func outputSection(for outputURL: URL) -> some View {
-        Label {
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color.accentColor)
             Text("拖出：\(outputURL.lastPathComponent)")
+                .font(.system(size: 10, weight: .medium))
                 .lineLimit(1)
-        } icon: {
-            Image(systemName: "square.and.arrow.up")
+            Spacer(minLength: 4)
+            Text("按住直接拖放")
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
         }
-        .font(.system(size: 10, weight: .medium))
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4.5)
+        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(Color.accentColor.opacity(0.3), lineWidth: 0.75)
+        )
         .contentShape(Rectangle())
         .onDrag { NSItemProvider(object: outputURL as NSURL) }
     }
 
     @ViewBuilder
     private var proBannerSection: some View {
-        Button("解锁 Pro · 本周已省 \(model.formattedSize(model.weeklySavedBytes))") {
+        Button {
             model.requestPro(for: .general)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 9))
+                Text("解锁 Pro · 本周已省 \(model.formattedSize(model.weeklySavedBytes))")
+                    .font(.system(size: 10, weight: .medium))
+            }
+            .foregroundStyle(Color.accentColor)
         }
         .buttonStyle(.plain)
-        .font(.system(size: 10, weight: .medium))
-        .foregroundStyle(.tint)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    // MARK: - Drag & Drop Handling
 
     private func receiveFiles(_ providers: [NSItemProvider]) -> Bool {
         let fileProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
