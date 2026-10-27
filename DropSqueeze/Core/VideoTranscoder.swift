@@ -53,8 +53,8 @@ enum VideoOutputPreset: String, CaseIterable, Identifiable, Codable, Sendable, E
 
     var title: String {
         switch self {
-        case .compact10MB: return "小体积 · 最多 10 MB"
-        case .share25MB: return "分享 · 最多 25 MB"
+        case .compact10MB: return "邮件 / Discord · ≤ 10 MB"
+        case .share25MB: return "微信直发 · ≤ 25 MB"
         case .standard720p: return "标准 · 720p"
         case .high1080p: return "清晰 · 1080p"
         }
@@ -62,8 +62,8 @@ enum VideoOutputPreset: String, CaseIterable, Identifiable, Codable, Sendable, E
 
     var detail: String {
         switch self {
-        case .compact10MB: return "适合邮件和小附件；输出不超过 10 MB。"
-        case .share25MB: return "适合聊天和常见分享；输出不超过 25 MB。"
+        case .compact10MB: return "严格控制在 10 MB 以内，适合邮件附件与 Discord 免费上传。"
+        case .share25MB: return "严格控制在微信 25 MB 文件限制之内，避免发送失败。"
         case .standard720p: return "720p 上限，不设文件大小上限。"
         case .high1080p: return "1080p 上限，不设文件大小上限。"
         }
@@ -85,8 +85,8 @@ enum VideoOutputPreset: String, CaseIterable, Identifiable, Codable, Sendable, E
 
     fileprivate var fileLengthLimit: Int64? {
         switch self {
-        case .compact10MB: return 10_000_000
-        case .share25MB: return 25_000_000
+        case .compact10MB: return 9_800_000
+        case .share25MB: return 24_500_000
         case .standard720p, .high1080p: return nil
         }
     }

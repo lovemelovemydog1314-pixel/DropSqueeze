@@ -474,6 +474,71 @@ final class VideoTargetSizeTests: XCTestCase {
         guard writer.status == .completed else { throw writer.error ?? VideoFixtureError.cannotFinishWriting }
     }
 
+    @MainActor
+    func testPlatformHardCapPresetsHaveSafeHeadroom() {
+        XCTAssertTrue(VideoOutputPreset.share25MB.title.contains("微信直发"))
+        XCTAssertTrue(VideoOutputPreset.compact10MB.title.contains("10 MB"))
+        XCTAssertTrue(CompressionScenario.weChat.title.contains("微信直发"))
+        XCTAssertTrue(CompressionScenario.silentTutorial.title.contains("静音"))
+
+        let weChatProfile = CompressionScenario.weChat.profile
+        XCTAssertEqual(weChatProfile.videoOutputPreset, .share25MB)
+        XCTAssertEqual(weChatProfile.videoMaximumSizeMB, 24)
+        XCTAssertTrue(weChatProfile.videoIncludesAudio)
+
+        let silentProfile = CompressionScenario.silentTutorial.profile
+        XCTAssertFalse(silentProfile.videoIncludesAudio)
+    }
+
+    @MainActor
+    func testCompletionSoundAndHapticsPreferencesPersist() {
+        let suiteName = "DropSqueezeTests.feedback.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let settings = RulesSettings(defaults: defaults)
+        XCTAssertTrue(settings.completionSoundEnabled)
+        XCTAssertEqual(settings.completionSoundName, CompressionFeedbackSound.pop.rawValue)
+        XCTAssertTrue(settings.hapticFeedbackEnabled)
+
+        settings.setCompletionSoundEnabled(false)
+        settings.setCompletionSoundName(CompressionFeedbackSound.glass.rawValue)
+        settings.setHapticFeedbackEnabled(false)
+
+        let reloaded = RulesSettings(defaults: defaults)
+        XCTAssertFalse(reloaded.completionSoundEnabled)
+        XCTAssertEqual(reloaded.completionSoundName, CompressionFeedbackSound.glass.rawValue)
+        XCTAssertFalse(reloaded.hapticFeedbackEnabled)
+
+        CompressionFeedbackController.shared.playFeedback(soundName: "None", haptics: false)
+        CompressionFeedbackController.shared.playFeedback(soundName: "Pop", haptics: true)
+    }
+
+    func testVideoAudioStrippingOptionProducesVideoWithoutAudioTracks() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DropSqueeze-video-mute-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let inputURL = directory.appendingPathComponent("mute-input.mp4")
+        try makeTestVideo(at: inputURL, width: 640, height: 360, frameCount: 60)
+
+        let outputURL = try await VideoTranscoder.transcodeToSmallerMP4(
+            inputURL,
+            preset: .standard720p,
+            codec: .automatic,
+            bitrateTarget: .automatic,
+            maximumFrameRate: .fps30,
+            includesAudio: false,
+            maximumSizeMB: nil,
+            outputDirectory: directory
+        )
+
+        let outputAsset = AVURLAsset(url: outputURL)
+        let audioTracks = try await outputAsset.loadTracks(withMediaType: .audio)
+        XCTAssertTrue(audioTracks.isEmpty, "When includesAudio is false, output video must have 0 audio tracks.")
+    }
+
     private enum VideoFixtureError: Error {
         case cannotCreateInput
         case cannotStartWriting

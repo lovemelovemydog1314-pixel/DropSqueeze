@@ -1486,8 +1486,16 @@ final class AppModel: ObservableObject {
     }
 
     private func sendCompressionNotice(_ notice: CompressionNotice) {
+        playCompletionFeedback()
         guard settings.notificationsEnabled else { return }
         compressionNotificationHandler?(notice)
+    }
+
+    func playCompletionFeedback() {
+        CompressionFeedbackController.shared.playFeedback(
+            soundName: settings.completionSoundEnabled ? settings.completionSoundName : nil,
+            haptics: settings.hapticFeedbackEnabled
+        )
     }
 
     private func savingPercent(originalBytes: Int64, resultBytes: Int64) -> Int {

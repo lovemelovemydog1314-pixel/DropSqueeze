@@ -43,6 +43,33 @@ struct SettingsView: View {
                             get: { settings.notificationsEnabled },
                             set: { model.setNotificationsEnabled($0) }
                         ))
+                        Toggle("压缩完成后播放提示音", isOn: Binding(
+                            get: { settings.completionSoundEnabled },
+                            set: { settings.setCompletionSoundEnabled($0) }
+                        ))
+                        if settings.completionSoundEnabled {
+                            HStack {
+                                Picker("提示音效", selection: Binding(
+                                    get: { CompressionFeedbackSound(rawValue: settings.completionSoundName) ?? .pop },
+                                    set: { settings.setCompletionSoundName($0.rawValue) }
+                                )) {
+                                    ForEach(CompressionFeedbackSound.allCases) { sound in
+                                        Text(sound.title).tag(sound)
+                                    }
+                                }
+                                Button {
+                                    CompressionFeedbackController.shared.playFeedback(soundName: settings.completionSoundName, haptics: false)
+                                } label: {
+                                    Image(systemName: "speaker.wave.2")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("试听此音效")
+                            }
+                        }
+                        Toggle("启用触觉震动反馈", isOn: Binding(
+                            get: { settings.hapticFeedbackEnabled },
+                            set: { settings.setHapticFeedbackEnabled($0) }
+                        ))
                         Text("每个文件夹可以分别设置媒体类型、递归范围、文件名、大小上限和输出命名。原文件会保留。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -130,6 +157,9 @@ struct SettingsView: View {
                             get: { settings.videoIncludesAudio },
                             set: { settings.setVideoIncludesAudio($0) }
                         ))
+                        Text("关闭后转码将剥离音频轨道，可大幅减小录屏体积并消除杂音。")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                         HStack {
                             Text("自定义最大体积")
                             TextField("留空使用预设", text: $videoMaximumSizeText)

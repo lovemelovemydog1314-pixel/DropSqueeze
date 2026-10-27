@@ -3,10 +3,18 @@ import AppKit
 import PDFKit
 import SwiftUI
 
+enum ImageComparisonMode: String, CaseIterable, Identifiable {
+    case split = "卷帘对比"
+    case sideBySide = "并排对比"
+
+    var id: String { rawValue }
+}
+
 struct OutputComparisonView: View {
     @Environment(\.dismiss) private var dismiss
     let item: HistoryItem
 
+    @State private var comparisonMode: ImageComparisonMode = .split
     @State private var sourceImage: NSImage?
     @State private var outputImage: NSImage?
     @State private var sourcePlayer: AVPlayer?
@@ -17,6 +25,7 @@ struct OutputComparisonView: View {
 
     private var isVideo: Bool { item.kind == .videoFile }
     private var isPDF: Bool { item.kind == .pdfFile }
+    private var isImage: Bool { item.kind == .imageFile }
 
     var body: some View {
         VStack(spacing: 14) {
@@ -30,6 +39,15 @@ struct OutputComparisonView: View {
                         .lineLimit(1)
                 }
                 Spacer()
+                if isImage && sourceImage != nil && outputImage != nil {
+                    Picker("模式", selection: $comparisonMode) {
+                        ForEach(ImageComparisonMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 160)
+                }
                 if item.kind == .imageFile && item.resultBytes >= item.originalBytes {
                     Text(item.resultBytes == item.originalBytes
                          ? "格式转换 · 体积不变"
@@ -45,24 +63,36 @@ struct OutputComparisonView: View {
                     .keyboardShortcut(.defaultAction)
             }
 
-            HStack(spacing: 14) {
-                comparisonPanel(
-                    title: "原件",
-                    size: item.originalBytes,
-                    details: item.sourceDetails?.summary,
-                    image: sourceImage,
-                    player: sourcePlayer,
-                    pdf: sourcePDF
+            if isImage && comparisonMode == .split, let sourceImage, let outputImage {
+                SplitImageView(
+                    sourceImage: sourceImage,
+                    outputImage: outputImage,
+                    originalBytes: item.originalBytes,
+                    resultBytes: item.resultBytes,
+                    sourceDetails: item.sourceDetails?.summary,
+                    outputDetails: item.outputDetails?.summary
                 )
-                comparisonPanel(
-                    title: "压缩结果",
-                    size: item.resultBytes,
-                    details: item.outputDetails?.summary,
-                    image: outputImage,
-                    player: outputPlayer,
-                    pdf: outputPDF
-                )
+            } else {
+                HStack(spacing: 14) {
+                    comparisonPanel(
+                        title: "原件",
+                        size: item.originalBytes,
+                        details: item.sourceDetails?.summary,
+                        image: sourceImage,
+                        player: sourcePlayer,
+                        pdf: sourcePDF
+                    )
+                    comparisonPanel(
+                        title: "压缩结果",
+                        size: item.resultBytes,
+                        details: item.outputDetails?.summary,
+                        image: outputImage,
+                        player: outputPlayer,
+                        pdf: outputPDF
+                    )
+                }
             }
+
             if isVideo {
                 Text("视频预览默认静音；两侧可分别播放和拖动进度。")
                     .font(.caption)
@@ -162,6 +192,126 @@ struct OutputComparisonView: View {
         outputPDF = nil
         sourceImage = nil
         outputImage = nil
+    }
+}
+
+struct SplitImageView: View {
+    let sourceImage: NSImage
+    let outputImage: NSImage
+    let originalBytes: Int64
+    let resultBytes: Int64
+    let sourceDetails: String?
+    let outputDetails: String?
+
+    @State private var sliderFraction: CGFloat = 0.5
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let height = proxy.size.height
+            let dividerX = max(10, min(width - 10, width * sliderFraction))
+
+            ZStack(alignment: .leading) {
+                // Background layer: Output (compressed image)
+                Image(nsImage: outputImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: width, height: height)
+
+                // Foreground layer: Source (original image), clipped to the left of divider
+                Image(nsImage: sourceImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: width, height: height)
+                    .mask(
+                        HStack(spacing: 0) {
+                            Rectangle()
+                                .frame(width: dividerX, height: height)
+                            Spacer(minLength: 0)
+                        }
+                    )
+
+                // Divider line
+                Rectangle()
+                    .fill(Color.white.opacity(0.9))
+                    .frame(width: 2)
+                    .shadow(color: .black.opacity(0.4), radius: 2)
+                    .position(x: dividerX, y: height / 2)
+
+                // Draggable handle
+                Circle()
+                    .fill(.ultraThinMaterial)
+                    .frame(width: 32, height: 32)
+                    .overlay(Circle().stroke(Color.white.opacity(0.9), lineWidth: 1.5))
+                    .overlay(
+                        Image(systemName: "arrow.left.and.right")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.primary)
+                    )
+                    .shadow(color: .black.opacity(0.3), radius: 4)
+                    .position(x: dividerX, y: height / 2)
+
+                // Header Badges
+                VStack {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("原件 · \(ByteCountFormatter.string(fromByteCount: originalBytes, countStyle: .file))")
+                                .font(.caption.weight(.semibold))
+                            if let sourceDetails, !sourceDetails.isEmpty {
+                                Text(sourceDetails)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                        .padding(12)
+
+                        Spacer()
+
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text("压缩后 · \(ByteCountFormatter.string(fromByteCount: resultBytes, countStyle: .file))")
+                                .font(.caption.weight(.semibold))
+                            if let outputDetails, !outputDetails.isEmpty {
+                                Text(outputDetails)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                        .padding(12)
+                    }
+
+                    Spacer()
+
+                    Text("左右拖拽滑块对比画质细节 · 双击滑块复位")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .padding(.bottom, 8)
+                }
+            }
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let fraction = value.location.x / width
+                        sliderFraction = max(0.02, min(0.98, fraction))
+                    }
+            )
+            .onTapGesture(count: 2) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    sliderFraction = 0.5
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

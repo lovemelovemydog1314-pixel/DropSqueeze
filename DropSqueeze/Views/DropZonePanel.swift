@@ -132,116 +132,18 @@ private struct DropZoneView: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            HStack(spacing: 8) {
-                if model.isProcessing {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "arrow.down.to.line.compact")
-                        .font(.system(size: 16, weight: .semibold))
-                }
-                Text(model.isProcessing ? "正在压缩…" : "DropSqueeze")
-                    .font(.system(size: 13, weight: .semibold))
-                Spacer(minLength: 4)
-                if model.canUndoClipboardCompression {
-                    Button("撤销") { model.undoClipboardCompression() }
-                        .buttonStyle(.borderless)
-                        .font(.caption.weight(.medium))
-                }
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("隐藏悬浮压缩舱")
-            }
-            if let currentFileName = model.currentFileName {
-                HStack(spacing: 6) {
-                    Text(currentFileName)
-                        .lineLimit(1)
-                    Spacer(minLength: 4)
-                    if model.queuedFileCount > 0 {
-                        Text("+\(model.queuedFileCount) 排队")
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                if let progress = model.currentProgress {
-                    ProgressView(value: progress)
-                        .progressViewStyle(.linear)
-                        .tint(.accentColor)
-                } else {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            } else {
-                Text(isTargeted ? "松开以压缩" : model.statusMessage)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            Text("拖入图片 · GIF · PDF · MOV · MP4 · M4V")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Menu {
-                ForEach(CompressionScenario.allCases) { scenario in
-                    Button("\(scenario.title)\(scenario.requiredProFeature == nil ? "" : " · Pro") · \(scenario.detail)") {
-                        model.applyCompressionScenario(scenario)
-                    }
-                }
-                if !model.settings.savedProfiles.isEmpty {
-                    Divider()
-                    ForEach(model.settings.savedProfiles) { profile in
-                        Button("应用：\(profile.name)") { model.applySavedProfile(profile) }
-                    }
-                }
-            } label: {
-                Label("预设：\(model.settings.imageResizePreset.title)", systemImage: "slider.horizontal.3")
-                    .font(.system(size: 10, weight: .medium))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .menuStyle(.borderlessButton)
+            headerBar
+            statusSection
+            supportedTypesText
+            scenarioAndAudioBar
             if model.isManualQueueRunning {
-                HStack {
-                    Text(model.isManualQueuePaused ? "队列已暂停" : (model.queuedFileCount > 0 ? "队列中还有 \(model.queuedFileCount) 个文件" : "正在处理最后一个文件"))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                    Spacer()
-                    Button(model.isManualQueuePaused ? "继续" : "暂停") {
-                        model.isManualQueuePaused ? model.resumeManualQueue() : model.pauseManualQueue()
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 10, weight: .medium))
-                    Button("停止队列") { model.stopManualQueue() }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 10, weight: .medium))
-                }
+                queueSection
             }
             if let outputURL = model.latestOutputURL {
-                Label {
-                    Text("拖出：\(outputURL.lastPathComponent)")
-                        .lineLimit(1)
-                } icon: {
-                    Image(systemName: "square.and.arrow.up")
-                }
-                .font(.system(size: 10, weight: .medium))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .onDrag { NSItemProvider(object: outputURL as NSURL) }
+                outputSection(for: outputURL)
             }
             if !model.purchaseManager.isPro {
-                Button("解锁 Pro · 本周已省 \(model.formattedSize(model.weeklySavedBytes))") {
-                    model.requestPro(for: .general)
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.tint)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                proBannerSection
             }
         }
         .padding(.horizontal, 15)
@@ -257,6 +159,155 @@ private struct DropZoneView: View {
         .onDrop(of: [UTType.fileURL], isTargeted: $isTargeted, perform: receiveFiles)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("DropSqueeze 文件压缩区，拖入图片、GIF、PDF、MOV、MP4 或 M4V")
+    }
+
+    @ViewBuilder
+    private var headerBar: some View {
+        HStack(spacing: 8) {
+            if model.isProcessing {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: "arrow.down.to.line.compact")
+                    .font(.system(size: 16, weight: .semibold))
+            }
+            Text(model.isProcessing ? "正在压缩…" : "DropSqueeze")
+                .font(.system(size: 13, weight: .semibold))
+            Spacer(minLength: 4)
+            if model.canUndoClipboardCompression {
+                Button("撤销") { model.undoClipboardCompression() }
+                    .buttonStyle(.borderless)
+                    .font(.caption.weight(.medium))
+            }
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("隐藏悬浮压缩舱")
+        }
+    }
+
+    @ViewBuilder
+    private var statusSection: some View {
+        if let currentFileName = model.currentFileName {
+            HStack(spacing: 6) {
+                Text(currentFileName)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if model.queuedFileCount > 0 {
+                    Text("+\(model.queuedFileCount) 排队")
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if let progress = model.currentProgress {
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+                    .tint(.accentColor)
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            Text(isTargeted ? "松开以压缩" : model.statusMessage)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var supportedTypesText: some View {
+        Text("拖入图片 · GIF · PDF · MOV · MP4 · M4V")
+            .font(.system(size: 10))
+            .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var scenarioAndAudioBar: some View {
+        HStack(spacing: 8) {
+            Menu {
+                ForEach(CompressionScenario.allCases) { scenario in
+                    Button("\(scenario.title)\(scenario.requiredProFeature == nil ? "" : " · Pro") · \(scenario.detail)") {
+                        model.applyCompressionScenario(scenario)
+                    }
+                }
+                if !model.settings.savedProfiles.isEmpty {
+                    Divider()
+                    ForEach(model.settings.savedProfiles) { profile in
+                        Button("应用：\(profile.name)") { model.applySavedProfile(profile) }
+                    }
+                }
+            } label: {
+                Label("预设：\(model.settings.imageResizePreset.title)", systemImage: "slider.horizontal.3")
+                    .font(.system(size: 10, weight: .medium))
+                    .lineLimit(1)
+            }
+            .menuStyle(.borderlessButton)
+
+            Spacer(minLength: 4)
+
+            Button {
+                model.settings.setVideoIncludesAudio(!model.settings.videoIncludesAudio)
+            } label: {
+                Label(
+                    model.settings.videoIncludesAudio ? "保留音频" : "录屏静音",
+                    systemImage: model.settings.videoIncludesAudio ? "speaker.wave.2.fill" : "speaker.slash.fill"
+                )
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(model.settings.videoIncludesAudio ? Color.secondary : Color.accentColor)
+            }
+            .buttonStyle(.plain)
+            .help(model.settings.videoIncludesAudio ? "点击切换为静音/剥离音频" : "已开启录屏静音，点击恢复保留音频")
+        }
+    }
+
+    @ViewBuilder
+    private var queueSection: some View {
+        HStack {
+            Text(model.isManualQueuePaused ? "队列已暂停" : (model.queuedFileCount > 0 ? "队列中还有 \(model.queuedFileCount) 个文件" : "正在处理最后一个文件"))
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+            Spacer()
+            Button(model.isManualQueuePaused ? "继续" : "暂停") {
+                model.isManualQueuePaused ? model.resumeManualQueue() : model.pauseManualQueue()
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 10, weight: .medium))
+            Button("停止队列") { model.stopManualQueue() }
+                .buttonStyle(.plain)
+                .font(.system(size: 10, weight: .medium))
+        }
+    }
+
+    @ViewBuilder
+    private func outputSection(for outputURL: URL) -> some View {
+        Label {
+            Text("拖出：\(outputURL.lastPathComponent)")
+                .lineLimit(1)
+        } icon: {
+            Image(systemName: "square.and.arrow.up")
+        }
+        .font(.system(size: 10, weight: .medium))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onDrag { NSItemProvider(object: outputURL as NSURL) }
+    }
+
+    @ViewBuilder
+    private var proBannerSection: some View {
+        Button("解锁 Pro · 本周已省 \(model.formattedSize(model.weeklySavedBytes))") {
+            model.requestPro(for: .general)
+        }
+        .buttonStyle(.plain)
+        .font(.system(size: 10, weight: .medium))
+        .foregroundStyle(.tint)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func receiveFiles(_ providers: [NSItemProvider]) -> Bool {

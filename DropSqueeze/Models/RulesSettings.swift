@@ -278,9 +278,11 @@ struct ImageCompressionOptions: Sendable {
 enum CompressionScenario: String, CaseIterable, Codable, Identifiable, Sendable {
     case balanced
     case messaging
+    case weChat
     case highQuality
     case emailAttachment
     case webPublishing
+    case silentTutorial
     case archive
 
     var id: String { rawValue }
@@ -289,9 +291,11 @@ enum CompressionScenario: String, CaseIterable, Codable, Identifiable, Sendable 
         switch self {
         case .balanced: return "均衡"
         case .messaging: return "聊天分享"
+        case .weChat: return "微信直发"
         case .highQuality: return "高画质"
         case .emailAttachment: return "邮件附件"
         case .webPublishing: return "网页图片"
+        case .silentTutorial: return "教程录屏 · 静音"
         case .archive: return "清晰归档"
         }
     }
@@ -300,9 +304,11 @@ enum CompressionScenario: String, CaseIterable, Codable, Identifiable, Sendable 
         switch self {
         case .balanced: return "日常图片与 720p 视频"
         case .messaging: return "缩小图片并优先控制视频体积"
+        case .weChat: return "视频控制在 ≤25 MB 微信上限以内；图片 1080p JPEG"
         case .highQuality: return "保留高分辨率与图像细节"
         case .emailAttachment: return "图片清除位置等信息；视频优先控制在 10 MB 内"
         case .webPublishing: return "图片输出 WebP 并移除多余元数据"
+        case .silentTutorial: return "剥离麦克风杂音与系统音轨；720p 30fps，体积大幅精简"
         case .archive: return "保留原始图像信息并优先保存细节"
         }
     }
@@ -320,6 +326,9 @@ enum CompressionScenario: String, CaseIterable, Codable, Identifiable, Sendable 
         let videoCodecPreference: VideoCodecPreference
         let videoBitrateTarget: VideoBitrateTarget
         let videoFrameRate: VideoFrameRate
+        var videoIncludesAudio = true
+        var videoMaximumSizeMB: Int? = nil
+
         switch self {
         case .balanced:
             imageResizePreset = .max2560
@@ -339,6 +348,17 @@ enum CompressionScenario: String, CaseIterable, Codable, Identifiable, Sendable 
             videoCodecPreference = .hevc
             videoBitrateTarget = .economy
             videoFrameRate = .fps30
+        case .weChat:
+            imageResizePreset = .max1920
+            imageQuality = 0.80
+            imageFileOutputFormat = .jpeg
+            stripImageMetadata = true
+            videoOutputPreset = .share25MB
+            videoCodecPreference = .h264
+            videoBitrateTarget = .economy
+            videoFrameRate = .fps30
+            videoIncludesAudio = true
+            videoMaximumSizeMB = 24
         case .highQuality:
             imageResizePreset = .max4096
             imageQuality = 0.92
@@ -366,6 +386,17 @@ enum CompressionScenario: String, CaseIterable, Codable, Identifiable, Sendable 
             videoCodecPreference = .h264
             videoBitrateTarget = .balanced
             videoFrameRate = .fps30
+        case .silentTutorial:
+            imageResizePreset = .max2560
+            imageQuality = 0.84
+            imageFileOutputFormat = .original
+            stripImageMetadata = false
+            videoOutputPreset = .standard720p
+            videoCodecPreference = .h264
+            videoBitrateTarget = .balanced
+            videoFrameRate = .fps30
+            videoIncludesAudio = false
+            videoMaximumSizeMB = nil
         case .archive:
             imageResizePreset = .max4096
             imageQuality = 0.96
@@ -386,8 +417,8 @@ enum CompressionScenario: String, CaseIterable, Codable, Identifiable, Sendable 
             videoCodecPreference: videoCodecPreference,
             videoBitrateTarget: videoBitrateTarget,
             videoFrameRate: videoFrameRate,
-            videoIncludesAudio: true,
-            videoMaximumSizeMB: nil
+            videoIncludesAudio: videoIncludesAudio,
+            videoMaximumSizeMB: videoMaximumSizeMB
         )
     }
 }
@@ -493,6 +524,9 @@ final class RulesSettings: ObservableObject {
     @Published private(set) var videoIncludesAudio: Bool
     @Published private(set) var videoMaximumSizeMB: Int?
     @Published private(set) var notificationsEnabled: Bool
+    @Published private(set) var completionSoundEnabled: Bool
+    @Published private(set) var completionSoundName: String
+    @Published private(set) var hapticFeedbackEnabled: Bool
     @Published private(set) var savedProfiles: [SavedCompressionProfile]
 
     private let defaults: UserDefaults
@@ -519,6 +553,9 @@ final class RulesSettings: ObservableObject {
         let savedMaximumSizeMB = defaults.object(forKey: "videoMaximumSizeMB") as? Int
         videoMaximumSizeMB = savedMaximumSizeMB.flatMap { (1...5_000).contains($0) ? $0 : nil }
         notificationsEnabled = defaults.object(forKey: "notificationsEnabled") as? Bool ?? true
+        completionSoundEnabled = defaults.object(forKey: "completionSoundEnabled") as? Bool ?? true
+        completionSoundName = defaults.string(forKey: "completionSoundName") ?? CompressionFeedbackSound.pop.rawValue
+        hapticFeedbackEnabled = defaults.object(forKey: "hapticFeedbackEnabled") as? Bool ?? true
         if let data = defaults.data(forKey: "savedCompressionProfiles"),
            let profiles = try? PropertyListDecoder().decode([SavedCompressionProfile].self, from: data) {
             savedProfiles = profiles
@@ -645,6 +682,21 @@ final class RulesSettings: ObservableObject {
     func setNotificationsEnabled(_ enabled: Bool) {
         notificationsEnabled = enabled
         defaults.set(enabled, forKey: "notificationsEnabled")
+    }
+
+    func setCompletionSoundEnabled(_ enabled: Bool) {
+        completionSoundEnabled = enabled
+        defaults.set(enabled, forKey: "completionSoundEnabled")
+    }
+
+    func setCompletionSoundName(_ name: String) {
+        completionSoundName = name
+        defaults.set(name, forKey: "completionSoundName")
+    }
+
+    func setHapticFeedbackEnabled(_ enabled: Bool) {
+        hapticFeedbackEnabled = enabled
+        defaults.set(enabled, forKey: "hapticFeedbackEnabled")
     }
 
     func applyScenario(_ scenario: CompressionScenario) {
