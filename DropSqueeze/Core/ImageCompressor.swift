@@ -16,6 +16,8 @@ enum ImageCompressionError: LocalizedError {
     case animatedImage
     case encodingFailed
     case webPUnavailable
+    case invalidTargetSize
+    case targetSizeUnreachable
 
     var errorDescription: String? {
         switch self {
@@ -24,6 +26,8 @@ enum ImageCompressionError: LocalizedError {
         case .animatedImage: return "暂不支持这种动图格式；为避免丢帧已跳过"
         case .encodingFailed: return "图片编码失败"
         case .webPUnavailable: return "此 macOS 版本暂不支持 WebP 编码"
+        case .invalidTargetSize: return "图片体积上限需要设置为 0.1–5000 MB"
+        case .targetSizeUnreachable: return "图片无法达到目标体积；已保留原件，请提高上限或选择更适合分享的格式与尺寸"
         }
     }
 }
@@ -59,6 +63,18 @@ enum ImageCompressor {
         guard supportedTypes.contains(detectedType) else { throw ImageCompressionError.unsupportedFormat }
         let frameCount = CGImageSourceGetCount(source)
         guard frameCount > 0 else { throw ImageCompressionError.unreadableImage }
+        if let maximumOutputSizeMB = options.maximumOutputSizeMB {
+            guard let maximumBytes = ImageOutputSizeLimit.bytes(for: maximumOutputSizeMB) else {
+                throw ImageCompressionError.invalidTargetSize
+            }
+            return try compressToMaximumSize(
+                data: data,
+                typeIdentifier: detectedType,
+                source: source,
+                options: options,
+                maximumBytes: maximumBytes
+            )
+        }
         if frameCount > 1 {
             guard detectedType == UTType.gif.identifier else { throw ImageCompressionError.animatedImage }
             return try compressAnimatedGIF(source: source, originalData: data, options: options)
@@ -142,6 +158,92 @@ enum ImageCompressor {
             fileExtension: fileExtension,
             originalByteCount: data.count
         )
+    }
+
+    private static func compressToMaximumSize(
+        data: Data,
+        typeIdentifier: String,
+        source: CGImageSource,
+        options: ImageCompressionOptions,
+        maximumBytes: Int64
+    ) throws -> CompressedImage? {
+        let unrestricted = options.adjusting(clearMaximumSizeLimit: true)
+        if Int64(data.count) <= maximumBytes {
+            return try compress(data: data, typeIdentifier: typeIdentifier, options: unrestricted)
+        }
+
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let height = properties[kCGImagePropertyPixelHeight] as? NSNumber else {
+            throw ImageCompressionError.unreadableImage
+        }
+        let sourceMaximumDimension = max(width.intValue, height.intValue)
+        guard sourceMaximumDimension > 0 else { throw ImageCompressionError.unreadableImage }
+        var dimension = min(sourceMaximumDimension, options.maxPixelDimension ?? sourceMaximumDimension)
+        let minimumDimension = min(64, dimension)
+        let requestedType = options.outputTypeIdentifier
+            ?? (options.outputWebP ? UTType.webP.identifier : typeIdentifier)
+        let hasTransparency = containsTransparentPixels(source: source, properties: properties)
+        let resolvedType = hasTransparency && requestedType == UTType.jpeg.identifier
+            ? UTType.png.identifier
+            : requestedType
+        let supportsQualitySearch = [UTType.jpeg.identifier, UTType.heic.identifier, UTType.webP.identifier]
+            .contains(resolvedType)
+        let highestQuality = min(0.96, max(0.4, options.jpegQuality))
+        let lowestQuality = 0.4
+        let maximumDimensionAttempts = 12
+        var attempts = 0
+
+        while attempts < maximumDimensionAttempts {
+            attempts += 1
+            let dimensionOptions = unrestricted.adjusting(maxPixelDimension: dimension)
+            let highQualityCandidate = try compress(
+                data: data,
+                typeIdentifier: typeIdentifier,
+                options: dimensionOptions.adjusting(jpegQuality: highestQuality)
+            )
+            if let highQualityCandidate, Int64(highQualityCandidate.data.count) <= maximumBytes {
+                return highQualityCandidate
+            }
+
+            var smallestObservedSize = highQualityCandidate?.data.count ?? data.count
+            if supportsQualitySearch, highestQuality > lowestQuality {
+                let lowQualityCandidate = try compress(
+                    data: data,
+                    typeIdentifier: typeIdentifier,
+                    options: dimensionOptions.adjusting(jpegQuality: lowestQuality)
+                )
+                smallestObservedSize = min(smallestObservedSize, lowQualityCandidate?.data.count ?? data.count)
+                if let lowQualityCandidate, Int64(lowQualityCandidate.data.count) <= maximumBytes {
+                    var bestCandidate = lowQualityCandidate
+                    var lowerQuality = lowestQuality
+                    var upperQuality = highestQuality
+                    for _ in 0..<6 {
+                        let midpoint = (lowerQuality + upperQuality) / 2
+                        let candidate = try compress(
+                            data: data,
+                            typeIdentifier: typeIdentifier,
+                            options: dimensionOptions.adjusting(jpegQuality: midpoint)
+                        )
+                        if let candidate, Int64(candidate.data.count) <= maximumBytes {
+                            bestCandidate = candidate
+                            lowerQuality = midpoint
+                        } else {
+                            upperQuality = midpoint
+                        }
+                    }
+                    return bestCandidate
+                }
+            }
+
+            guard dimension > minimumDimension else { break }
+            let sizeRatio = sqrt(Double(maximumBytes) / Double(max(1, smallestObservedSize)))
+            let scale = min(0.85, max(0.2, sizeRatio * 0.9))
+            let proposedDimension = Int((Double(dimension) * scale).rounded(.down))
+            dimension = max(minimumDimension, min(dimension - 1, proposedDimension))
+        }
+
+        throw ImageCompressionError.targetSizeUnreachable
     }
 
     private static func thumbnail(
@@ -328,5 +430,23 @@ enum ImageCompressor {
         }
         let input = try Data(contentsOf: inputURL, options: [.mappedIfSafe])
         return try compress(data: input, typeIdentifier: typeIdentifier, options: options)
+    }
+}
+
+private extension ImageCompressionOptions {
+    func adjusting(
+        maxPixelDimension: Int? = nil,
+        jpegQuality: Double? = nil,
+        clearMaximumSizeLimit: Bool = false
+    ) -> ImageCompressionOptions {
+        ImageCompressionOptions(
+            resizeRetinaTo1x: resizeRetinaTo1x,
+            outputWebP: outputWebP,
+            outputTypeIdentifier: outputTypeIdentifier,
+            maxPixelDimension: maxPixelDimension ?? self.maxPixelDimension,
+            jpegQuality: jpegQuality ?? self.jpegQuality,
+            stripMetadata: stripMetadata,
+            maximumOutputSizeMB: clearMaximumSizeLimit ? nil : maximumOutputSizeMB
+        )
     }
 }

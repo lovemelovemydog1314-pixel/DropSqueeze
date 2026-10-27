@@ -8,6 +8,7 @@ struct SettingsView: View {
     @State private var isShowingPrivacy = false
     @State private var newProfileName = ""
     @State private var videoMaximumSizeText = ""
+    @State private var imageMaximumSizeText = ""
 
     var body: some View {
         ScrollView {
@@ -296,12 +297,49 @@ struct SettingsView: View {
                                 .frame(width: 36, alignment: .trailing)
                         }
 
+                        HStack(spacing: 8) {
+                            Text("图片体积上限")
+                                .font(.system(size: 11))
+                            TextField("留空关闭", text: $imageMaximumSizeText)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 108)
+                                .onAppear {
+                                    imageMaximumSizeText = settings.imageMaximumSizeMB.map { String(format: "%.1f", $0) } ?? ""
+                                }
+                                .onChange(of: imageMaximumSizeText) { value in
+                                    let filtered = String(value.filter { $0.isNumber || $0 == "." }.prefix(7))
+                                    if filtered != value {
+                                        imageMaximumSizeText = filtered
+                                        return
+                                    }
+                                    guard !filtered.isEmpty else {
+                                        settings.setImageMaximumSizeMB(nil)
+                                        return
+                                    }
+                                    guard let requestedSize = Double(filtered), requestedSize.isFinite else { return }
+                                    let boundedSize = min(max(requestedSize, ImageOutputSizeLimit.minimumMegabytes), ImageOutputSizeLimit.maximumMegabytes)
+                                    if boundedSize != requestedSize {
+                                        imageMaximumSizeText = String(format: "%.1f", boundedSize)
+                                    }
+                                    settings.setImageMaximumSizeMB(boundedSize)
+                                }
+                                .onChange(of: settings.imageMaximumSizeMB) { value in
+                                    let storedValue = value.map { String(format: "%.1f", $0) } ?? ""
+                                    if storedValue != imageMaximumSizeText {
+                                        imageMaximumSizeText = storedValue
+                                    }
+                                }
+                            Text("MB")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+
                         Toggle("移除 EXIF、GPS 拍摄地点与隐私元数据", isOn: Binding(
                             get: { settings.stripImageMetadata },
                             set: { settings.setStripImageMetadata($0) }
                         ))
 
-                        Text("动图始终保持 GIF 格式；矢量图自动净化无损压缩；剪贴板图片自动同步此质量策略。")
+                        Text("设置体积上限后，DropSqueeze 会尽量以最高画质达标；动图仍保持 GIF 格式。剪贴板图片也使用此上限。")
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                     }

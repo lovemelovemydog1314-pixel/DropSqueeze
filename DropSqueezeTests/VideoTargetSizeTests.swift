@@ -41,6 +41,115 @@ final class VideoTargetSizeTests: XCTestCase {
     }
 
     @MainActor
+    func testCustomMaximumImageSizePersistsAndInvalidValuesClearIt() throws {
+        let suiteName = "DropSqueezeTests.image-target.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let settings = RulesSettings(defaults: defaults)
+        XCTAssertNil(settings.imageMaximumSizeMB)
+        settings.setImageMaximumSizeMB(0.7)
+        XCTAssertEqual(settings.imageMaximumSizeMB, 0.7)
+        XCTAssertEqual(RulesSettings(defaults: defaults).imageMaximumSizeMB, 0.7)
+
+        let profile = try XCTUnwrap(settings.saveCurrentProfile(name: "小图分享"))
+        XCTAssertEqual(profile.imageMaximumSizeMB, 0.7)
+        settings.setImageMaximumSizeMB(nil)
+        settings.apply(profile)
+        XCTAssertEqual(settings.imageMaximumSizeMB, 0.7)
+        XCTAssertEqual(RulesSettings(defaults: defaults).savedProfiles.first?.imageMaximumSizeMB, 0.7)
+
+        settings.setImageMaximumSizeMB(0.05)
+        XCTAssertNil(settings.imageMaximumSizeMB)
+        settings.setImageMaximumSizeMB(5_001)
+        XCTAssertNil(settings.imageMaximumSizeMB)
+        XCTAssertNil(ImageOutputSizeLimit.bytes(for: .nan))
+        XCTAssertNil(ImageOutputSizeLimit.bytes(for: .infinity))
+    }
+
+    func testImageOutputSizeLimitsConvertDecimalMegabytesSafely() {
+        XCTAssertEqual(ImageOutputSizeLimit.bytes(for: 0.1), 100_000)
+        XCTAssertEqual(ImageOutputSizeLimit.bytes(for: 1.25), 1_250_000)
+        XCTAssertNil(ImageOutputSizeLimit.bytes(for: 0.099))
+        XCTAssertNil(ImageOutputSizeLimit.bytes(for: 5_000.1))
+    }
+
+    func testImageCompressionRejectsAnInvalidTargetSize() throws {
+        let sourceData = try makeNoisePNG(width: 10, height: 10)
+        let options = ImageCompressionOptions(
+            resizeRetinaTo1x: false,
+            outputWebP: false,
+            outputTypeIdentifier: UTType.jpeg.identifier,
+            maxPixelDimension: nil,
+            jpegQuality: 0.88,
+            stripMetadata: true,
+            maximumOutputSizeMB: 0.05
+        )
+
+        XCTAssertThrowsError(try ImageCompressor.compress(
+            data: sourceData,
+            typeIdentifier: UTType.png.identifier,
+            options: options
+        )) { error in
+            XCTAssertEqual((error as? ImageCompressionError)?.errorDescription, "图片体积上限需要设置为 0.1–5000 MB")
+        }
+    }
+
+    func testImageCompressionResizesAndTunesQualityToMeetTheRequestedMaximum() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DropSqueeze-image-target-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let inputURL = directory.appendingPathComponent("noise.png")
+        let sourceData = try makeNoisePNG(width: 1_024, height: 768)
+        try sourceData.write(to: inputURL)
+        let options = ImageCompressionOptions(
+            resizeRetinaTo1x: false,
+            outputWebP: false,
+            outputTypeIdentifier: UTType.jpeg.identifier,
+            maxPixelDimension: nil,
+            jpegQuality: 0.92,
+            stripMetadata: true,
+            maximumOutputSizeMB: 0.2
+        )
+
+        let compressed = try XCTUnwrap(ImageCompressor.compressFile(at: inputURL, options: options))
+        XCTAssertLessThanOrEqual(compressed.data.count, 200_000)
+        XCTAssertEqual(compressed.typeIdentifier, UTType.jpeg.identifier)
+        XCTAssertEqual(try Data(contentsOf: inputURL), sourceData, "Target-size compression must leave the original untouched.")
+
+        let outputURL = try ImageCompressor.writeCompressedFile(compressed, beside: inputURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
+        XCTAssertLessThanOrEqual(try Self.fileSize(at: outputURL), 200_000)
+        XCTAssertEqual(try Data(contentsOf: inputURL), sourceData)
+    }
+
+    func testImageTargetSizeCanShrinkLosslessPNGWithoutChangingItsFormat() throws {
+        let sourceData = try makeNoisePNG(width: 1_024, height: 768)
+        let options = ImageCompressionOptions(
+            resizeRetinaTo1x: false,
+            outputWebP: false,
+            outputTypeIdentifier: UTType.png.identifier,
+            maxPixelDimension: nil,
+            jpegQuality: 0.88,
+            stripMetadata: true,
+            maximumOutputSizeMB: 0.1
+        )
+
+        let compressed = try XCTUnwrap(ImageCompressor.compress(data: sourceData, typeIdentifier: UTType.png.identifier, options: options))
+        XCTAssertLessThanOrEqual(compressed.data.count, 100_000)
+        XCTAssertEqual(compressed.typeIdentifier, UTType.png.identifier)
+        let resultSource = try XCTUnwrap(CGImageSourceCreateWithData(compressed.data as CFData, nil))
+        let properties = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(resultSource, 0, nil) as? [CFString: Any])
+        let longestEdge = max(
+            try XCTUnwrap(properties[kCGImagePropertyPixelWidth] as? Int),
+            try XCTUnwrap(properties[kCGImagePropertyPixelHeight] as? Int)
+        )
+        XCTAssertLessThan(longestEdge, 1_024)
+    }
+
+    @MainActor
     func testSavedProfileKeepsCustomMaximumVideoSize() throws {
         let suiteName = "DropSqueezeTests.video-profile.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -87,6 +196,7 @@ final class VideoTargetSizeTests: XCTestCase {
             PropertyListSerialization.propertyList(from: encoded, format: nil) as? [String: Any]
         )
         legacyDictionary.removeValue(forKey: "videoMaximumSizeMB")
+        legacyDictionary.removeValue(forKey: "imageMaximumSizeMB")
         legacyDictionary.removeValue(forKey: "retinaDownscaleEnabled")
         legacyDictionary.removeValue(forKey: "gifConversionEnabled")
         let legacyData = try PropertyListSerialization.data(fromPropertyList: legacyDictionary, format: .binary, options: 0)
@@ -94,6 +204,7 @@ final class VideoTargetSizeTests: XCTestCase {
         let decoded = try PropertyListDecoder().decode(SavedCompressionProfile.self, from: legacyData)
         XCTAssertEqual(decoded.name, "旧配置")
         XCTAssertNil(decoded.videoMaximumSizeMB)
+        XCTAssertNil(decoded.imageMaximumSizeMB)
         XCTAssertNil(decoded.retinaDownscaleEnabled)
         XCTAssertNil(decoded.gifConversionEnabled)
     }
@@ -324,10 +435,14 @@ final class VideoTargetSizeTests: XCTestCase {
         settings.applyScenario(.emailAttachment)
         XCTAssertEqual(settings.imageResizePreset, .max1920)
         XCTAssertEqual(settings.imageFileOutputFormat, .jpeg)
+        XCTAssertEqual(settings.imageMaximumSizeMB, 10)
         XCTAssertTrue(settings.stripImageMetadata)
         XCTAssertEqual(settings.videoOutputPreset, .compact10MB)
         XCTAssertEqual(settings.videoCodecPreference, .h264)
         XCTAssertNil(settings.videoMaximumSizeMB, "Applying a built-in preset must clear the prior custom cap.")
+
+        settings.applyScenario(.messaging)
+        XCTAssertEqual(settings.imageMaximumSizeMB, 5)
 
         settings.applyScenario(.webPublishing)
         XCTAssertEqual(settings.imageFileOutputFormat, .webP)
@@ -337,6 +452,7 @@ final class VideoTargetSizeTests: XCTestCase {
         XCTAssertNil(CompressionScenario.emailAttachment.requiredProFeature)
 
         settings.applyScenario(.archive)
+        XCTAssertNil(settings.imageMaximumSizeMB)
         XCTAssertEqual(settings.imageResizePreset, .max4096)
         XCTAssertEqual(settings.imageQuality, 0.96, accuracy: 0.001)
         XCTAssertEqual(settings.imageFileOutputFormat, .original)
@@ -393,6 +509,34 @@ final class VideoTargetSizeTests: XCTestCase {
         let temporaryFiles = try FileManager.default.contentsOfDirectory(atPath: directory.path)
             .filter { $0.hasPrefix(".dropsqueeze-") }
         XCTAssertTrue(temporaryFiles.isEmpty, "Failed and successful attempts must clean up temporary exports.")
+    }
+
+    private func makeNoisePNG(width: Int, height: Int) throws -> Data {
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: width,
+            pixelsHigh: height,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let pixels = try XCTUnwrap(bitmap.bitmapData)
+        var state: UInt32 = 0x1234_5678
+        for y in 0..<height {
+            for x in 0..<width {
+                let offset = y * bitmap.bytesPerRow + x * 4
+                for channel in 0..<3 {
+                    state = state &* 1_664_525 &+ 1_013_904_223
+                    pixels[offset + channel] = UInt8(truncatingIfNeeded: state >> 24)
+                }
+                pixels[offset + 3] = 255
+            }
+        }
+        return try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
     }
 
     private static func fileSize(at url: URL) throws -> Int64 {

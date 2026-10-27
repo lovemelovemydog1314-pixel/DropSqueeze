@@ -265,6 +265,7 @@ struct ImageCompressionOptions: Sendable {
     let maxPixelDimension: Int?
     let jpegQuality: Double
     let stripMetadata: Bool
+    let maximumOutputSizeMB: Double?
 
     static let standard = ImageCompressionOptions(
         resizeRetinaTo1x: false,
@@ -272,8 +273,21 @@ struct ImageCompressionOptions: Sendable {
         outputTypeIdentifier: nil,
         maxPixelDimension: nil,
         jpegQuality: 0.88,
-        stripMetadata: false
+        stripMetadata: false,
+        maximumOutputSizeMB: nil
     )
+}
+
+enum ImageOutputSizeLimit {
+    static let minimumMegabytes = 0.1
+    static let maximumMegabytes = 5_000.0
+
+    static func bytes(for megabytes: Double?) -> Int64? {
+        guard let megabytes,
+              megabytes.isFinite,
+              (minimumMegabytes...maximumMegabytes).contains(megabytes) else { return nil }
+        return Int64((megabytes * 1_000_000).rounded(.down))
+    }
 }
 
 enum CompressionScenario: String, CaseIterable, Codable, Identifiable, Sendable {
@@ -329,6 +343,7 @@ enum CompressionScenario: String, CaseIterable, Codable, Identifiable, Sendable 
         let videoFrameRate: VideoFrameRate
         var videoIncludesAudio = true
         var videoMaximumSizeMB: Int? = nil
+        var imageMaximumSizeMB: Double? = nil
 
         switch self {
         case .balanced:
@@ -349,6 +364,7 @@ enum CompressionScenario: String, CaseIterable, Codable, Identifiable, Sendable 
             videoCodecPreference = .hevc
             videoBitrateTarget = .economy
             videoFrameRate = .fps30
+            imageMaximumSizeMB = 5
         case .weChat:
             imageResizePreset = .max1920
             imageQuality = 0.80
@@ -360,6 +376,7 @@ enum CompressionScenario: String, CaseIterable, Codable, Identifiable, Sendable 
             videoFrameRate = .fps30
             videoIncludesAudio = true
             videoMaximumSizeMB = 24
+            imageMaximumSizeMB = 10
         case .highQuality:
             imageResizePreset = .max4096
             imageQuality = 0.92
@@ -378,6 +395,7 @@ enum CompressionScenario: String, CaseIterable, Codable, Identifiable, Sendable 
             videoCodecPreference = .h264
             videoBitrateTarget = .economy
             videoFrameRate = .fps30
+            imageMaximumSizeMB = 10
         case .webPublishing:
             imageResizePreset = .max2560
             imageQuality = 0.82
@@ -419,7 +437,8 @@ enum CompressionScenario: String, CaseIterable, Codable, Identifiable, Sendable 
             videoBitrateTarget: videoBitrateTarget,
             videoFrameRate: videoFrameRate,
             videoIncludesAudio: videoIncludesAudio,
-            videoMaximumSizeMB: videoMaximumSizeMB
+            videoMaximumSizeMB: videoMaximumSizeMB,
+            imageMaximumSizeMB: imageMaximumSizeMB
         )
     }
 }
@@ -467,6 +486,7 @@ struct SavedCompressionProfile: Codable, Identifiable, Equatable {
     var name: String
     var imageResizePreset: ImageResizePreset
     var imageQuality: Double
+    var imageMaximumSizeMB: Double?
     var imageFileOutputFormat: ImageFileOutputFormat
     var stripImageMetadata: Bool
     var videoOutputPreset: VideoOutputPreset
@@ -482,7 +502,8 @@ struct SavedCompressionProfile: Codable, Identifiable, Equatable {
          imageFileOutputFormat: ImageFileOutputFormat, stripImageMetadata: Bool, videoOutputPreset: VideoOutputPreset,
          videoCodecPreference: VideoCodecPreference, videoBitrateTarget: VideoBitrateTarget,
          videoFrameRate: VideoFrameRate, videoIncludesAudio: Bool, videoMaximumSizeMB: Int? = nil,
-         retinaDownscaleEnabled: Bool? = nil, gifConversionEnabled: Bool? = nil) {
+         retinaDownscaleEnabled: Bool? = nil, gifConversionEnabled: Bool? = nil,
+         imageMaximumSizeMB: Double? = nil) {
         self.id = id
         self.name = name
         self.imageResizePreset = imageResizePreset
@@ -495,6 +516,7 @@ struct SavedCompressionProfile: Codable, Identifiable, Equatable {
         self.videoFrameRate = videoFrameRate
         self.videoIncludesAudio = videoIncludesAudio
         self.videoMaximumSizeMB = videoMaximumSizeMB
+        self.imageMaximumSizeMB = ImageOutputSizeLimit.bytes(for: imageMaximumSizeMB) == nil ? nil : imageMaximumSizeMB
         self.retinaDownscaleEnabled = retinaDownscaleEnabled
         self.gifConversionEnabled = gifConversionEnabled
     }
@@ -517,6 +539,7 @@ final class RulesSettings: ObservableObject {
     @Published private(set) var gifConversionEnabled: Bool
     @Published private(set) var imageResizePreset: ImageResizePreset
     @Published private(set) var imageQuality: Double
+    @Published private(set) var imageMaximumSizeMB: Double?
     @Published private(set) var stripImageMetadata: Bool
     @Published private(set) var videoOutputPreset: VideoOutputPreset
     @Published private(set) var videoCodecPreference: VideoCodecPreference
@@ -545,6 +568,8 @@ final class RulesSettings: ObservableObject {
         gifConversionEnabled = defaults.bool(forKey: "gifConversionEnabled")
         imageResizePreset = ImageResizePreset(rawValue: defaults.string(forKey: "imageResizePreset") ?? "") ?? .original
         imageQuality = min(0.96, max(0.4, defaults.object(forKey: "imageQuality") as? Double ?? 0.88))
+        let savedImageMaximumSizeMB = defaults.object(forKey: "imageMaximumSizeMB") as? Double
+        imageMaximumSizeMB = ImageOutputSizeLimit.bytes(for: savedImageMaximumSizeMB) == nil ? nil : savedImageMaximumSizeMB
         stripImageMetadata = defaults.bool(forKey: "stripImageMetadata")
         videoOutputPreset = VideoOutputPreset(rawValue: defaults.string(forKey: "videoOutputPreset") ?? "") ?? .standard720p
         videoCodecPreference = VideoCodecPreference(rawValue: defaults.string(forKey: "videoCodecPreference") ?? "") ?? .automatic
@@ -572,7 +597,8 @@ final class RulesSettings: ObservableObject {
             outputTypeIdentifier: nil,
             maxPixelDimension: imageResizePreset.maxPixelDimension,
             jpegQuality: imageQuality,
-            stripMetadata: stripImageMetadata
+            stripMetadata: stripImageMetadata,
+            maximumOutputSizeMB: imageMaximumSizeMB
         )
     }
 
@@ -583,7 +609,8 @@ final class RulesSettings: ObservableObject {
             outputTypeIdentifier: imageFileOutputFormat.typeIdentifier,
             maxPixelDimension: imageResizePreset.maxPixelDimension,
             jpegQuality: imageQuality,
-            stripMetadata: stripImageMetadata
+            stripMetadata: stripImageMetadata,
+            maximumOutputSizeMB: imageMaximumSizeMB
         )
     }
 
@@ -675,6 +702,16 @@ final class RulesSettings: ObservableObject {
         defaults.set(imageQuality, forKey: "imageQuality")
     }
 
+    func setImageMaximumSizeMB(_ sizeMB: Double?) {
+        let validSizeMB = sizeMB.flatMap { ImageOutputSizeLimit.bytes(for: $0) == nil ? nil : $0 }
+        imageMaximumSizeMB = validSizeMB
+        if let validSizeMB {
+            defaults.set(validSizeMB, forKey: "imageMaximumSizeMB")
+        } else {
+            defaults.removeObject(forKey: "imageMaximumSizeMB")
+        }
+    }
+
     func setStripImageMetadata(_ enabled: Bool) {
         stripImageMetadata = enabled
         defaults.set(enabled, forKey: "stripImageMetadata")
@@ -721,7 +758,8 @@ final class RulesSettings: ObservableObject {
             videoIncludesAudio: videoIncludesAudio,
             videoMaximumSizeMB: videoMaximumSizeMB,
             retinaDownscaleEnabled: retinaDownscaleEnabled,
-            gifConversionEnabled: gifConversionEnabled
+            gifConversionEnabled: gifConversionEnabled,
+            imageMaximumSizeMB: imageMaximumSizeMB
         )
         savedProfiles.append(profile)
         persistProfiles()
@@ -731,6 +769,7 @@ final class RulesSettings: ObservableObject {
     func apply(_ profile: SavedCompressionProfile) {
         setImageResizePreset(profile.imageResizePreset)
         setImageQuality(profile.imageQuality)
+        setImageMaximumSizeMB(profile.imageMaximumSizeMB)
         setImageFileOutputFormat(profile.imageFileOutputFormat)
         setStripImageMetadata(profile.stripImageMetadata)
         setVideoOutputPreset(profile.videoOutputPreset)

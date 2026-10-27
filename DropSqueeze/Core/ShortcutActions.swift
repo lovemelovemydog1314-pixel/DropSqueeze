@@ -90,7 +90,7 @@ struct ShortcutCompressionProfileQuery: EntityQuery {
 
 struct CompressMediaFilesIntent: AppIntent {
     static var title: LocalizedStringResource = "压缩媒体文件"
-    static var description = IntentDescription("选择场景或已保存配置，指定视频体积上限和输出位置；原文件始终保留。")
+    static var description = IntentDescription("选择场景或已保存配置，为图片和视频设定体积上限及输出位置；原文件始终保留。")
     static var openAppWhenRun = true
 
     @Parameter(
@@ -108,11 +108,14 @@ struct CompressMediaFilesIntent: AppIntent {
     @Parameter(title: "视频最大体积（MB）", default: nil)
     var maximumVideoSizeMB: Int?
 
+    @Parameter(title: "图片最大体积（MB）", default: nil)
+    var maximumImageSizeMB: Double?
+
     @Parameter(title: "输出位置", default: .appDefault)
     var outputDestination: ShortcutOutputDestination
 
     static var parameterSummary: some ParameterSummary {
-        Summary("压缩 \(\.$files)，使用 \(\.$profile)，视频预设 \(\.$videoPreset)，上限 \(\.$maximumVideoSizeMB) MB，保存到 \(\.$outputDestination)")
+        Summary("压缩 \(\.$files)，使用 \(\.$profile)，视频预设 \(\.$videoPreset)，图片上限 \(\.$maximumImageSizeMB) MB，视频上限 \(\.$maximumVideoSizeMB) MB，保存到 \(\.$outputDestination)")
     }
 
     func perform() async throws -> some IntentResult & ReturnsValue<[IntentFile]> {
@@ -126,6 +129,7 @@ struct CompressMediaFilesIntent: AppIntent {
             profileIdentifier: profile?.id ?? CompressionProfileReference.currentIdentifier,
             videoPresetOverride: videoPreset?.outputPreset,
             maximumVideoSizeMB: maximumVideoSizeMB,
+            maximumImageSizeMB: maximumImageSizeMB,
             outputDestination: outputDestination.modelValue
         )
         let outputs = outputURLs.map { url in
@@ -146,6 +150,7 @@ private enum ShortcutCompressionBridge {
         profileIdentifier: String,
         videoPresetOverride: VideoOutputPreset?,
         maximumVideoSizeMB: Int?,
+        maximumImageSizeMB: Double?,
         outputDestination: CompressionOutputDestination
     ) async throws -> [URL] {
         guard let model = AppModel.shared else { throw ShortcutIntentError.appUnavailable }
@@ -154,6 +159,7 @@ private enum ShortcutCompressionBridge {
             profileIdentifier: profileIdentifier,
             videoPresetOverride: videoPresetOverride,
             maximumVideoSizeMB: maximumVideoSizeMB,
+            maximumImageSizeMB: maximumImageSizeMB,
             outputDestination: outputDestination
         )
     }

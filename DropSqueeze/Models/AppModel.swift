@@ -252,7 +252,7 @@ enum ShortcutCompressionError: LocalizedError {
         case .pdfRequiresPro: return "PDF 压缩需要 DropSqueeze Pro。"
         case .selectedProfileUnavailable: return "所选压缩配置已删除，请在快捷指令中重新选择。"
         case .selectedFeatureRequiresPro: return "此压缩配置包含 Pro 功能，请升级后继续。"
-        case .invalidMaximumSize: return "视频最大体积需要设置为 1–5000 MB。"
+        case .invalidMaximumSize: return "图片体积上限需为 0.1–5000 MB，视频上限需为 1–5000 MB。"
         case .noSupportedFiles: return "没有生成压缩副本；请检查文件格式或选择更大的输出预设。"
         }
     }
@@ -888,6 +888,7 @@ final class AppModel: ObservableObject {
         profileIdentifier: String = CompressionProfileReference.currentIdentifier,
         videoPresetOverride: VideoOutputPreset? = nil,
         maximumVideoSizeMB: Int? = nil,
+        maximumImageSizeMB: Double? = nil,
         outputDestination: CompressionOutputDestination = .appDefault
     ) async throws -> [URL] {
         var seenPaths = Set<String>()
@@ -896,6 +897,9 @@ final class AppModel: ObservableObject {
         }
         guard !validURLs.isEmpty else { throw ShortcutCompressionError.noSupportedFiles }
         guard maximumVideoSizeMB.map({ (1...5_000).contains($0) }) ?? true else {
+            throw ShortcutCompressionError.invalidMaximumSize
+        }
+        guard maximumImageSizeMB.map({ ImageOutputSizeLimit.bytes(for: $0) != nil }) ?? true else {
             throw ShortcutCompressionError.invalidMaximumSize
         }
         let selectedProfile = CompressionProfileReference.isCurrent(profileIdentifier)
@@ -947,6 +951,7 @@ final class AppModel: ObservableObject {
                 videoPresetOverride: videoPresetOverride,
                 profileOverride: selectedProfile,
                 maximumVideoSizeMBOverride: maximumVideoSizeMB,
+                maximumImageSizeMBOverride: maximumImageSizeMB,
                 outputDestinationOverride: outputDestination
             ) {
                 outcomes.append(outcome)
@@ -1243,6 +1248,7 @@ final class AppModel: ObservableObject {
         outputNameTemplate: String? = nil,
         profileOverride: SavedCompressionProfile? = nil,
         maximumVideoSizeMBOverride: Int? = nil,
+        maximumImageSizeMBOverride: Double? = nil,
         outputDestinationOverride: CompressionOutputDestination? = nil,
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async -> FileCompressionOutcome? {
@@ -1393,10 +1399,23 @@ final class AppModel: ObservableObject {
                         outputTypeIdentifier: selectedImageOutputFormat.typeIdentifier,
                         maxPixelDimension: profileOverride.imageResizePreset.maxPixelDimension,
                         jpegQuality: profileOverride.imageQuality,
-                        stripMetadata: profileOverride.stripImageMetadata
+                        stripMetadata: profileOverride.stripImageMetadata,
+                        maximumOutputSizeMB: maximumImageSizeMBOverride ?? profileOverride.imageMaximumSizeMB
                     )
                 } else {
-                    options = settings.fileImageOptions
+                    var currentOptions = settings.fileImageOptions
+                    if let maximumImageSizeMBOverride {
+                        currentOptions = ImageCompressionOptions(
+                            resizeRetinaTo1x: currentOptions.resizeRetinaTo1x,
+                            outputWebP: currentOptions.outputWebP,
+                            outputTypeIdentifier: currentOptions.outputTypeIdentifier,
+                            maxPixelDimension: currentOptions.maxPixelDimension,
+                            jpegQuality: currentOptions.jpegQuality,
+                            stripMetadata: currentOptions.stripMetadata,
+                            maximumOutputSizeMB: maximumImageSizeMBOverride
+                        )
+                    }
+                    options = currentOptions
                 }
                 guard !options.outputWebP || ImageCompressor.webPEncodingAvailable else {
                     throw ImageCompressionError.webPUnavailable
