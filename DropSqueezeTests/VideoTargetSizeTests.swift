@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 import CoreVideo
+import ImageIO
 import PDFKit
 import SwiftUI
 import XCTest
@@ -685,6 +686,27 @@ final class VideoTargetSizeTests: XCTestCase {
         guard writer.status == .completed else { throw writer.error ?? VideoFixtureError.cannotFinishWriting }
     }
 
+    private func makeTestAudio(at url: URL, durationSeconds: Double) throws {
+        let sampleRate = 44_100.0
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 96_000
+        ]
+        let audioFile = try AVAudioFile(forWriting: url, settings: settings)
+        let frameCount = AVAudioFrameCount(sampleRate * durationSeconds)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: audioFile.processingFormat, frameCapacity: frameCount),
+              let samples = buffer.floatChannelData?[0] else {
+            throw VideoFixtureError.cannotCreateAudioBuffer
+        }
+        buffer.frameLength = frameCount
+        for frame in 0..<Int(frameCount) {
+            samples[frame] = Float(sin(Double(frame) * 2 * .pi * 440 / sampleRate)) * 0.2
+        }
+        try audioFile.write(from: buffer)
+    }
+
     @MainActor
     func testPlatformHardCapPresetsHaveSafeHeadroom() {
         XCTAssertTrue(VideoOutputPreset.share25MB.title.contains("微信直发"))
@@ -748,6 +770,137 @@ final class VideoTargetSizeTests: XCTestCase {
         let outputAsset = AVURLAsset(url: outputURL)
         let audioTracks = try await outputAsset.loadTracks(withMediaType: .audio)
         XCTAssertTrue(audioTracks.isEmpty, "When includesAudio is false, output video must have 0 audio tracks.")
+    }
+
+    func testVideoTrimRangeValidatesBoundsAndMinimumDuration() throws {
+        let valid = try VideoTrimRange(startSeconds: 0.5, endSeconds: 2.5, assetDurationSeconds: 4)
+        XCTAssertEqual(valid.durationSeconds, 2, accuracy: 0.0001)
+        XCTAssertEqual(CMTimeGetSeconds(valid.timeRange.start), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(CMTimeGetSeconds(valid.timeRange.duration), 2, accuracy: 0.0001)
+        XCTAssertThrowsError(try VideoTrimRange(startSeconds: -0.1, endSeconds: 1, assetDurationSeconds: 4))
+        XCTAssertThrowsError(try VideoTrimRange(startSeconds: 1, endSeconds: 1.2, assetDurationSeconds: 4))
+        XCTAssertThrowsError(try VideoTrimRange(startSeconds: 0, endSeconds: 5, assetDurationSeconds: 4))
+        XCTAssertThrowsError(try VideoTrimRange(startSeconds: .nan, endSeconds: 1, assetDurationSeconds: 4))
+        XCTAssertThrowsError(try valid.validate(against: 2))
+    }
+
+    func testQuickEditTranscodesOnlySelectedVideoRangeAndPreservesSource() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DropSqueeze-video-trim-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let inputURL = directory.appendingPathComponent("trim-input.mp4")
+        try makeTestVideo(at: inputURL, width: 640, height: 360, frameCount: 120)
+        let originalBytes = try Self.fileSize(at: inputURL)
+        let range = try VideoTrimRange(startSeconds: 1, endSeconds: 2.5, assetDurationSeconds: 4)
+        let outputURL = try await VideoTranscoder.transcodeToSmallerMP4(
+            inputURL,
+            preset: .standard720p,
+            codec: .h264,
+            bitrateTarget: .automatic,
+            maximumFrameRate: .fps30,
+            includesAudio: true,
+            trimRange: range,
+            requiresSmallerOutput: false,
+            outputDirectory: directory
+        )
+
+        XCTAssertEqual(outputURL.lastPathComponent, "trim-input-edited.mp4")
+        XCTAssertEqual(try Self.fileSize(at: inputURL), originalBytes)
+        XCTAssertGreaterThan(try Self.fileSize(at: outputURL), 0)
+        let outputAsset = AVURLAsset(url: outputURL)
+        let outputDuration = try await outputAsset.load(.duration).seconds
+        XCTAssertEqual(outputDuration, 1.5, accuracy: 0.12)
+        let outputVideoTracks = try await outputAsset.loadTracks(withMediaType: .video)
+        XCTAssertEqual(outputVideoTracks.count, 1)
+    }
+
+    func testQuickEditExportsConfigurableTrimmedGIF() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DropSqueeze-video-gif-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let inputURL = directory.appendingPathComponent("gif-input.mp4")
+        try makeTestVideo(at: inputURL, width: 320, height: 180, frameCount: 90)
+        let originalBytes = try Self.fileSize(at: inputURL)
+        let range = try VideoTrimRange(startSeconds: 0.5, endSeconds: 1.5, assetDurationSeconds: 3)
+        let outputURL = try await GIFGenerator.generateGIF(
+            from: inputURL,
+            trimRange: range,
+            framesPerSecond: 12,
+            maximumDimension: 256,
+            outputDirectory: directory
+        )
+
+        XCTAssertEqual(outputURL.lastPathComponent, "gif-input-edited.gif")
+        XCTAssertEqual(try Self.fileSize(at: inputURL), originalBytes)
+        let imageSource = try XCTUnwrap(CGImageSourceCreateWithURL(outputURL as CFURL, nil))
+        XCTAssertEqual(CGImageSourceGetCount(imageSource), 12)
+        let properties = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any])
+        let width = try XCTUnwrap(properties[kCGImagePropertyPixelWidth] as? Int)
+        let height = try XCTUnwrap(properties[kCGImagePropertyPixelHeight] as? Int)
+        XCTAssertLessThanOrEqual(max(width, height), 256)
+        XCTAssertGreaterThan(min(width, height), 0)
+    }
+
+    func testQuickEditExtractsTrimmedM4AAndPreservesSource() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DropSqueeze-video-audio-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let inputURL = directory.appendingPathComponent("audio-input.m4a")
+        try makeTestAudio(at: inputURL, durationSeconds: 4)
+        let originalBytes = try Self.fileSize(at: inputURL)
+        let range = try VideoTrimRange(startSeconds: 0.5, endSeconds: 2, assetDurationSeconds: 4)
+        let outputURL = try await AudioExtractor.extractM4A(from: inputURL, trimRange: range, outputDirectory: directory)
+
+        XCTAssertEqual(outputURL.lastPathComponent, "audio-input-audio.m4a")
+        XCTAssertEqual(try Self.fileSize(at: inputURL), originalBytes)
+        XCTAssertGreaterThan(try Self.fileSize(at: outputURL), 0)
+        let outputAsset = AVURLAsset(url: outputURL)
+        let outputAudioTracks = try await outputAsset.loadTracks(withMediaType: .audio)
+        XCTAssertEqual(outputAudioTracks.count, 1)
+        let outputDuration = try await outputAsset.load(.duration).seconds
+        XCTAssertEqual(outputDuration, 1.5, accuracy: 0.2)
+    }
+
+    func testAudioExtractionReportsMissingAudioTrack() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DropSqueeze-video-no-audio-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let inputURL = directory.appendingPathComponent("silent.mp4")
+        try makeTestVideo(at: inputURL, width: 320, height: 180, frameCount: 30)
+        do {
+            _ = try await AudioExtractor.extractM4A(from: inputURL, outputDirectory: directory)
+            XCTFail("Audio extraction should reject a video without audio tracks.")
+        } catch {
+            XCTAssertEqual((error as? AudioExtractionError)?.errorDescription, "此视频没有可提取的音轨")
+        }
+    }
+
+    func testQuickEditExportersHonorCancellationBeforeStarting() async throws {
+        let cancellation = VideoTranscoderCancellation()
+        cancellation.cancel()
+        let missingURL = URL(fileURLWithPath: "/tmp/dropsqueeze-cancelled-media-does-not-exist.mp4")
+
+        do {
+            _ = try await GIFGenerator.generateGIF(from: missingURL, cancellation: cancellation)
+            XCTFail("GIF generation should stop before reading a cancelled source.")
+        } catch {
+            XCTAssertEqual((error as? GIFGenerationError)?.errorDescription, "GIF 导出已取消")
+        }
+
+        do {
+            _ = try await AudioExtractor.extractM4A(from: missingURL, cancellation: cancellation)
+            XCTFail("Audio extraction should stop before reading a cancelled source.")
+        } catch {
+            XCTAssertEqual((error as? AudioExtractionError)?.errorDescription, "音频导出已取消")
+        }
     }
 
     func testSVGMinifierCleansMetadataAndExcessivePrecision() throws {
@@ -844,5 +997,6 @@ final class VideoTargetSizeTests: XCTestCase {
         case cannotCreatePixelBuffer
         case cannotAppendFrame
         case cannotFinishWriting
+        case cannotCreateAudioBuffer
     }
 }

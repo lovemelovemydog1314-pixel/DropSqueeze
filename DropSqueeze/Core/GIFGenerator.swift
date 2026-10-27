@@ -32,6 +32,8 @@ enum GIFGenerationError: LocalizedError {
     case noFrames
     case exportFailed
     case outputNotSmaller
+    case invalidOptions
+    case cancelled
 
     var errorDescription: String? {
         switch self {
@@ -41,6 +43,8 @@ enum GIFGenerationError: LocalizedError {
         case .noFrames: return "无法从视频读取画面"
         case .exportFailed: return "GIF 编码失败"
         case .outputNotSmaller: return "GIF 结果没有更小，已保留原视频"
+        case .invalidOptions: return "GIF 帧率须为 1–30 fps，长边须为 128–1280 像素"
+        case .cancelled: return "GIF 导出已取消"
         }
     }
 }
@@ -51,12 +55,47 @@ enum GIFGenerator {
     private static let maximumDimension = 1280.0
 
     static func generateSmallerGIF(from inputURL: URL, outputDirectory: URL? = nil) async throws -> URL {
+        try await generateGIF(
+            from: inputURL,
+            framesPerSecond: Int(maximumFramesPerSecond),
+            maximumDimension: Int(maximumDimension),
+            requiresSmallerOutput: true,
+            outputSuffix: "compressed",
+            outputDirectory: outputDirectory
+        )
+    }
+
+    static func generateGIF(
+        from inputURL: URL,
+        trimRange: VideoTrimRange? = nil,
+        framesPerSecond: Int = 15,
+        maximumDimension: Int = 720,
+        requiresSmallerOutput: Bool = false,
+        outputSuffix: String = "edited",
+        cancellation: VideoTranscoderCancellation? = nil,
+        outputDirectory: URL? = nil
+    ) async throws -> URL {
+        guard cancellation?.isCancelled != true else { throw GIFGenerationError.cancelled }
+        guard (1...Int(maximumFramesPerSecond)).contains(framesPerSecond),
+              (128...Int(maximumDimensionLimit)).contains(maximumDimension) else {
+            throw GIFGenerationError.invalidOptions
+        }
         let asset = AVURLAsset(url: inputURL)
         let duration = try await asset.load(.duration)
-        let durationSeconds = duration.seconds
-        guard durationSeconds.isFinite, durationSeconds > 0, durationSeconds <= maximumDuration else {
+        let assetDurationSeconds = duration.seconds
+        guard assetDurationSeconds.isFinite, assetDurationSeconds > 0 else {
             throw GIFGenerationError.tooLong
         }
+        if let trimRange {
+            do {
+                try trimRange.validate(against: assetDurationSeconds)
+            } catch {
+                throw GIFGenerationError.tooLong
+            }
+        }
+        let startSeconds = trimRange?.startSeconds ?? 0
+        let durationSeconds = trimRange?.durationSeconds ?? assetDurationSeconds
+        guard durationSeconds <= maximumDuration else { throw GIFGenerationError.tooLong }
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw GIFGenerationError.noVideoTrack
         }
@@ -74,7 +113,13 @@ enum GIFGenerator {
                 from: inputURL,
                 outputDirectory: outputDirectory,
                 source: source,
-                durationSeconds: durationSeconds
+                startSeconds: startSeconds,
+                durationSeconds: durationSeconds,
+                framesPerSecond: framesPerSecond,
+                maximumDimension: maximumDimension,
+                requiresSmallerOutput: requiresSmallerOutput,
+                outputSuffix: outputSuffix,
+                cancellation: cancellation
             )
         }.value
     }
@@ -83,7 +128,13 @@ enum GIFGenerator {
         from inputURL: URL,
         outputDirectory: URL?,
         source: GIFVideoSource,
-        durationSeconds: Double
+        startSeconds: Double,
+        durationSeconds: Double,
+        framesPerSecond: Int,
+        maximumDimension: Int,
+        requiresSmallerOutput: Bool,
+        outputSuffix: String,
+        cancellation: VideoTranscoderCancellation?
     ) throws -> URL {
         let fileManager = FileManager.default
         let directory = outputDirectory ?? inputURL.deletingLastPathComponent()
@@ -92,8 +143,8 @@ enum GIFGenerator {
 
         let nominalFrameRate = Double(source.nominalFrameRate)
         let frameInterval = max(
-            1.0 / maximumFramesPerSecond,
-            1.0 / (nominalFrameRate.isFinite && nominalFrameRate > 0 ? nominalFrameRate : maximumFramesPerSecond)
+            1.0 / Double(framesPerSecond),
+            1.0 / (nominalFrameRate.isFinite && nominalFrameRate > 0 ? nominalFrameRate : Double(framesPerSecond))
         )
         let expectedFrameCount = max(1, Int(ceil(durationSeconds / frameInterval)))
         guard let destination = CGImageDestinationCreateWithURL(
@@ -125,7 +176,10 @@ enum GIFGenerator {
             throw GIFGenerationError.readerUnavailable("无法读取视频画面")
         }
         reader.add(output)
-        reader.timeRange = CMTimeRange(start: .zero, duration: source.duration)
+        reader.timeRange = CMTimeRange(
+            start: CMTime(seconds: startSeconds, preferredTimescale: 600),
+            duration: CMTime(seconds: durationSeconds, preferredTimescale: 600)
+        )
         guard reader.startReading() else {
             throw GIFGenerationError.readerUnavailable(reader.error?.localizedDescription ?? "无法开始读取视频")
         }
@@ -135,9 +189,10 @@ enum GIFGenerator {
         var frameCount = 0
 
         while let sampleBuffer = output.copyNextSampleBuffer() {
-            let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
+            if cancellation?.isCancelled == true { throw GIFGenerationError.cancelled }
+            let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds - startSeconds
             guard presentationTime.isFinite else { continue }
-            if presentationTime > maximumDuration { break }
+            if presentationTime > durationSeconds { break }
             guard presentationTime + frameInterval / 2 >= nextFrameTime else { continue }
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
 
@@ -147,7 +202,7 @@ enum GIFGenerator {
                 let extent = image.extent
                 let normalized = image.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
                 let longestSide = max(normalized.extent.width, normalized.extent.height)
-                let scale = min(1.0, maximumDimension / max(longestSide, 1))
+                let scale = min(1.0, Double(maximumDimension) / max(longestSide, 1))
                 let resized = scale < 1
                     ? normalized.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
                     : normalized
@@ -169,28 +224,32 @@ enum GIFGenerator {
             if frameCount >= expectedFrameCount { break }
         }
 
+        if cancellation?.isCancelled == true { throw GIFGenerationError.cancelled }
         guard frameCount > 0 else { throw GIFGenerationError.noFrames }
         guard CGImageDestinationFinalize(destination) else { throw GIFGenerationError.exportFailed }
 
         let sourceSize = try fileManager.attributesOfItem(atPath: inputURL.path)[.size] as? NSNumber
         let resultSize = try fileManager.attributesOfItem(atPath: temporaryURL.path)[.size] as? NSNumber
-        guard let sourceSize, let resultSize, resultSize.intValue < sourceSize.intValue else {
+        guard let sourceSize, let resultSize,
+              !requiresSmallerOutput || resultSize.intValue < sourceSize.intValue else {
             throw GIFGenerationError.outputNotSmaller
         }
 
-        var suffix = 1
+        var counter = 1
         while true {
-            let name = suffix == 1
-                ? "\(inputURL.deletingPathExtension().lastPathComponent)-compressed.gif"
-                : "\(inputURL.deletingPathExtension().lastPathComponent)-compressed-\(suffix).gif"
+            let name = counter == 1
+                ? "\(inputURL.deletingPathExtension().lastPathComponent)-\(outputSuffix).gif"
+                : "\(inputURL.deletingPathExtension().lastPathComponent)-\(outputSuffix)-\(counter).gif"
             let outputURL = directory.appendingPathComponent(name)
             do {
                 try fileManager.moveItem(at: temporaryURL, to: outputURL)
                 return outputURL
             } catch {
                 guard fileManager.fileExists(atPath: outputURL.path) else { throw error }
-                suffix += 1
+                counter += 1
             }
         }
     }
+
+    private static let maximumDimensionLimit = 1280.0
 }

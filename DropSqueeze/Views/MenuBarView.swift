@@ -1,11 +1,14 @@
 import AppKit
+import AVKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct MenuBarView: View {
     @ObservedObject var model: AppModel
     @State private var selectedTab = 0
     @State private var selectedComparison: HistoryItem?
     @State private var isShowingSavingsCard = false
+    @State private var isShowingVideoQuickEdit = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,6 +43,9 @@ struct MenuBarView: View {
         }
         .sheet(isPresented: $isShowingSavingsCard) {
             SavingsCardView(model: model)
+        }
+        .sheet(isPresented: $isShowingVideoQuickEdit) {
+            VideoQuickEditView(model: model)
         }
     }
 
@@ -279,6 +285,18 @@ struct MenuBarView: View {
                 )
             }
             .buttonStyle(.tactile)
+
+            Button {
+                isShowingVideoQuickEdit = true
+            } label: {
+                Label("视频轻编辑", systemImage: "scissors")
+                    .font(.system(size: 11, weight: .medium))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            .buttonStyle(.tactile)
+            .help("剪辑片段、导出 GIF 或提取音频")
         }
     }
 
@@ -583,5 +601,384 @@ struct MenuBarView: View {
         case .videoFile: return Color.orange
         case .pdfFile: return Color.red
         }
+    }
+}
+
+private enum VideoQuickEditAction: String, CaseIterable, Identifiable {
+    case compressClip
+    case gif
+    case audio
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .compressClip: return "压缩所选片段"
+        case .gif: return "导出 GIF"
+        case .audio: return "提取 M4A 音频"
+        }
+    }
+}
+
+private struct VideoQuickEditView: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var sourceURL: URL?
+    @State private var sourceAccessActive = false
+    @State private var player: AVPlayer?
+    @State private var durationSeconds = 0.0
+    @State private var startSeconds = 0.0
+    @State private var endSeconds = 0.0
+    @State private var action: VideoQuickEditAction = .compressClip
+    @State private var gifFramesPerSecond = 15
+    @State private var gifMaximumDimension = 720
+    @State private var selectedOutputDirectory: URL?
+    @State private var outputDirectoryAccessActive = false
+    @State private var isProcessing = false
+    @State private var progress = 0.0
+    @State private var resultURL: URL?
+    @State private var errorMessage: String?
+    @State private var cancellation = VideoTranscoderCancellation()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("视频轻编辑")
+                        .font(.system(size: 17, weight: .semibold))
+                    Text("选择片段后压缩、转 GIF 或提取音频。原视频会完整保留。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("完成") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            }
+
+            if let player {
+                VideoPlayer(player: player)
+                    .frame(height: 250)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "film")
+                        .font(.system(size: 30))
+                        .foregroundStyle(.secondary)
+                    Text("选择一个视频")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("支持常见的 MOV、MP4 视频文件")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 250)
+                    .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    chooseVideo()
+                } label: {
+                    Label(sourceURL == nil ? "选择视频" : "更换视频", systemImage: "folder")
+                }
+                .buttonStyle(.bordered)
+
+                if let sourceURL {
+                    Text(sourceURL.lastPathComponent)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+            }
+
+            if durationSeconds >= VideoTrimRange.minimumDuration {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("片段范围")
+                            .font(.system(size: 12, weight: .semibold))
+                        Spacer()
+                        Text("\(timeLabel(startSeconds)) – \(timeLabel(endSeconds)) · 共 \(timeLabel(endSeconds - startSeconds))")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 8) {
+                        Text("开始").font(.system(size: 10)).foregroundStyle(.secondary)
+                        Slider(
+                            value: Binding(
+                                get: { startSeconds },
+                                set: { startSeconds = min($0, max(0, endSeconds - VideoTrimRange.minimumDuration)) }
+                            ),
+                            in: 0...max(0, durationSeconds - VideoTrimRange.minimumDuration)
+                        )
+                        Text(timeLabel(startSeconds)).font(.system(size: 10, design: .monospaced)).frame(width: 46, alignment: .trailing)
+                    }
+                    HStack(spacing: 8) {
+                        Text("结束").font(.system(size: 10)).foregroundStyle(.secondary)
+                        Slider(
+                            value: Binding(
+                                get: { endSeconds },
+                                set: { endSeconds = max($0, startSeconds + VideoTrimRange.minimumDuration) }
+                            ),
+                            in: min(durationSeconds, startSeconds + VideoTrimRange.minimumDuration)...durationSeconds
+                        )
+                        Text(timeLabel(endSeconds)).font(.system(size: 10, design: .monospaced)).frame(width: 46, alignment: .trailing)
+                    }
+                }
+                .padding(10)
+                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            }
+
+            HStack(spacing: 12) {
+                Picker("处理方式", selection: $action) {
+                    ForEach(VideoQuickEditAction.allCases) { option in
+                        Text(option.title).tag(option)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 190)
+
+                if action == .gif {
+                    Picker("帧率", selection: $gifFramesPerSecond) {
+                        ForEach([12, 15, 24, 30], id: \.self) { Text("\($0) fps").tag($0) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 100)
+
+                    Picker("长边", selection: $gifMaximumDimension) {
+                        ForEach([480, 720, 960, 1280], id: \.self) { Text("\($0) px").tag($0) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 100)
+                }
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: "folder")
+                    .foregroundStyle(.secondary)
+                Text(outputLocationDescription)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Button("更改") { chooseOutputDirectory() }
+                    .buttonStyle(.link)
+                    .font(.system(size: 10))
+            }
+
+            if isProcessing {
+                HStack(spacing: 8) {
+                    if action == .compressClip {
+                        ProgressView(value: progress)
+                        Text("\(Int(progress * 100))%")
+                            .font(.system(size: 10, design: .monospaced))
+                            .frame(width: 38, alignment: .trailing)
+                    } else {
+                        ProgressView()
+                        Text("正在导出…")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    Button("取消") { cancellation.cancel() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
+
+            if let errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let resultURL {
+                HStack(spacing: 8) {
+                    Label("已导出：\(resultURL.lastPathComponent)", systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.green)
+                        .lineLimit(1)
+                    Spacer()
+                    Button("打开") { NSWorkspace.shared.open(resultURL) }
+                    Button("显示") { NSWorkspace.shared.activateFileViewerSelecting([resultURL]) }
+                }
+            }
+
+            HStack {
+                Text(actionDetail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+                Spacer()
+                Button {
+                    Task { await processSelection() }
+                } label: {
+                    Label(isProcessing ? "处理中" : action.title, systemImage: action == .audio ? "waveform" : (action == .gif ? "gift" : "scissors"))
+                        .frame(minWidth: 130)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(sourceURL == nil || durationSeconds < VideoTrimRange.minimumDuration || isProcessing)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(18)
+        .frame(width: 650, height: 650)
+        .onDisappear {
+            if isProcessing { cancellation.cancel() }
+            player?.pause()
+            if sourceAccessActive { sourceURL?.stopAccessingSecurityScopedResource() }
+            if outputDirectoryAccessActive { selectedOutputDirectory?.stopAccessingSecurityScopedResource() }
+        }
+    }
+
+    private var outputLocationDescription: String {
+        selectedOutputDirectory?.lastPathComponent
+            ?? model.outputFolderURL?.lastPathComponent
+            ?? sourceURL?.deletingLastPathComponent().lastPathComponent
+            ?? "原文件所在文件夹"
+    }
+
+    private var actionDetail: String {
+        switch action {
+        case .compressClip: return "按应用的视频压缩设置导出片段；长度约束仍会生效。"
+        case .gif: return "GIF 片段最长 15 秒，帧率和长边可调整。"
+        case .audio: return "仅提取所选范围内的音轨，保存为通用 M4A。"
+        }
+    }
+
+    private func chooseVideo() {
+        let panel = NSOpenPanel()
+        panel.title = "选择要编辑的视频"
+        panel.prompt = "选择视频"
+        panel.allowedContentTypes = [.movie]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        player?.pause()
+        if sourceAccessActive { sourceURL?.stopAccessingSecurityScopedResource() }
+        sourceAccessActive = url.startAccessingSecurityScopedResource()
+        sourceURL = url
+        resultURL = nil
+        errorMessage = nil
+        Task {
+            do {
+                let asset = AVURLAsset(url: url)
+                let duration = try await asset.load(.duration).seconds
+                guard duration.isFinite, duration >= VideoTrimRange.minimumDuration else {
+                    throw VideoTrimRangeError.invalidRange
+                }
+                durationSeconds = duration
+                startSeconds = 0
+                endSeconds = duration
+                let nextPlayer = AVPlayer(url: url)
+                player = nextPlayer
+                nextPlayer.play()
+            } catch {
+                player = nil
+                durationSeconds = 0
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func chooseOutputDirectory() {
+        let panel = NSOpenPanel()
+        panel.title = "选择轻编辑结果的保存文件夹"
+        panel.prompt = "保存到此文件夹"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = selectedOutputDirectory ?? model.outputFolderURL
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        if outputDirectoryAccessActive { selectedOutputDirectory?.stopAccessingSecurityScopedResource() }
+        selectedOutputDirectory = url
+        outputDirectoryAccessActive = url.startAccessingSecurityScopedResource()
+    }
+
+    @MainActor
+    private func processSelection() async {
+        guard let sourceURL else { return }
+        isProcessing = true
+        progress = 0
+        resultURL = nil
+        errorMessage = nil
+        cancellation = VideoTranscoderCancellation()
+        defer { isProcessing = false }
+
+        var startedConfiguredOutputAccess = false
+        let outputDirectory: URL
+        if let selectedOutputDirectory {
+            outputDirectory = selectedOutputDirectory
+        } else if let configuredOutput = model.outputFolderURL {
+            startedConfiguredOutputAccess = configuredOutput.startAccessingSecurityScopedResource()
+            outputDirectory = configuredOutput
+        } else {
+            outputDirectory = sourceURL.deletingLastPathComponent()
+        }
+        defer {
+            if startedConfiguredOutputAccess, let configuredOutput = model.outputFolderURL {
+                configuredOutput.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        do {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: outputDirectory.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue,
+                  FileManager.default.isWritableFile(atPath: outputDirectory.path) else {
+                throw AudioExtractionError.exportFailed("没有写入输出文件夹的权限，请更换文件夹")
+            }
+            let range = try VideoTrimRange(
+                startSeconds: startSeconds,
+                endSeconds: endSeconds,
+                assetDurationSeconds: durationSeconds
+            )
+            let exportedURL: URL
+            switch action {
+            case .compressClip:
+                exportedURL = try await VideoTranscoder.transcodeToSmallerMP4(
+                    sourceURL,
+                    preset: model.settings.videoOutputPreset,
+                    codec: model.settings.videoCodecPreference,
+                    bitrateTarget: model.settings.videoBitrateTarget,
+                    maximumFrameRate: model.settings.videoFrameRate,
+                    includesAudio: model.settings.videoIncludesAudio,
+                    maximumSizeMB: model.settings.videoMaximumSizeMB,
+                    trimRange: range,
+                    requiresSmallerOutput: false,
+                    outputDirectory: outputDirectory,
+                    cancellation: cancellation,
+                    onProgress: { value in
+                        Task { @MainActor in progress = value }
+                    }
+                )
+            case .gif:
+                exportedURL = try await GIFGenerator.generateGIF(
+                    from: sourceURL,
+                    trimRange: range,
+                    framesPerSecond: gifFramesPerSecond,
+                    maximumDimension: gifMaximumDimension,
+                    requiresSmallerOutput: false,
+                    outputSuffix: "edited",
+                    cancellation: cancellation,
+                    outputDirectory: outputDirectory
+                )
+            case .audio:
+                exportedURL = try await AudioExtractor.extractM4A(
+                    from: sourceURL,
+                    trimRange: range,
+                    cancellation: cancellation,
+                    outputDirectory: outputDirectory
+                )
+            }
+            resultURL = exportedURL
+            progress = 1
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func timeLabel(_ seconds: Double) -> String {
+        String(format: "%0.2f 秒", seconds)
     }
 }

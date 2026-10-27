@@ -115,6 +115,54 @@ enum VideoOutputPreset: String, CaseIterable, Identifiable, Codable, Sendable, E
     }
 }
 
+struct VideoTrimRange: Sendable, Equatable {
+    static let minimumDuration = 0.25
+
+    let startSeconds: Double
+    let endSeconds: Double
+
+    var durationSeconds: Double { endSeconds - startSeconds }
+
+    init(startSeconds: Double, endSeconds: Double, assetDurationSeconds: Double) throws {
+        guard assetDurationSeconds.isFinite,
+              assetDurationSeconds >= Self.minimumDuration,
+              startSeconds.isFinite,
+              endSeconds.isFinite,
+              startSeconds >= 0,
+              endSeconds <= assetDurationSeconds,
+              endSeconds - startSeconds >= Self.minimumDuration else {
+            throw VideoTrimRangeError.invalidRange
+        }
+        self.startSeconds = startSeconds
+        self.endSeconds = endSeconds
+    }
+
+    func validate(against assetDurationSeconds: Double) throws {
+        guard assetDurationSeconds.isFinite,
+              assetDurationSeconds >= Self.minimumDuration,
+              startSeconds.isFinite,
+              endSeconds.isFinite,
+              startSeconds >= 0,
+              endSeconds <= assetDurationSeconds,
+              durationSeconds >= Self.minimumDuration else {
+            throw VideoTrimRangeError.invalidRange
+        }
+    }
+
+    var timeRange: CMTimeRange {
+        CMTimeRange(
+            start: CMTime(seconds: startSeconds, preferredTimescale: 600),
+            duration: CMTime(seconds: durationSeconds, preferredTimescale: 600)
+        )
+    }
+}
+
+enum VideoTrimRangeError: LocalizedError {
+    case invalidRange
+
+    var errorDescription: String? { "片段范围无效，请至少选择 0.25 秒且不要超出视频时长" }
+}
+
 final class ExportSessionBox: @unchecked Sendable {
     let value: AVAssetExportSession
 
@@ -163,6 +211,7 @@ enum VideoTranscodingError: LocalizedError {
     case outputNotSmaller
     case outputExceedsLimit
     case cancelled
+    case invalidTrimRange
 
     var errorDescription: String? {
         switch self {
@@ -171,6 +220,7 @@ enum VideoTranscodingError: LocalizedError {
         case .outputNotSmaller: return "转码结果没有更小，已保留原视频"
         case .outputExceedsLimit: return "视频无法压到所选大小，请选择更大的目标体积"
         case .cancelled: return "视频压缩已取消"
+        case .invalidTrimRange: return "剪辑片段范围无效，请重新选择"
         }
     }
 }
@@ -184,12 +234,22 @@ enum VideoTranscoder {
         maximumFrameRate: VideoFrameRate = .original,
         includesAudio: Bool = true,
         maximumSizeMB: Int? = nil,
+        trimRange: VideoTrimRange? = nil,
+        requiresSmallerOutput: Bool = true,
         outputDirectory: URL? = nil,
         cancellation: VideoTranscoderCancellation? = nil,
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
         let targetSizeMB = maximumSizeMB.flatMap { (1...5_000).contains($0) ? $0 : nil }
         let sourceAsset = AVURLAsset(url: inputURL)
+        if let trimRange {
+            let sourceDuration = try await sourceAsset.load(.duration).seconds
+            do {
+                try trimRange.validate(against: sourceDuration)
+            } catch {
+                throw VideoTranscodingError.invalidTrimRange
+            }
+        }
         let asset: AVAsset
         do {
             if includesAudio {
@@ -203,7 +263,7 @@ enum VideoTranscoder {
         let fileManager = FileManager.default
         let directory = outputDirectory ?? inputURL.deletingLastPathComponent()
         let stem = inputURL.deletingPathExtension().lastPathComponent
-        let outputURL = uniqueOutputURL(in: directory, stem: stem)
+        let outputURL = uniqueOutputURL(in: directory, stem: stem, suffix: trimRange == nil ? "compressed" : "edited")
         var fileLengthLimits = targetSizeMB == nil ? [preset.fileLengthLimit].compactMap { $0 } : []
         if let targetSizeMB {
             let maximumBytes = Int64(targetSizeMB) * 1_000_000
@@ -211,7 +271,7 @@ enum VideoTranscoder {
         }
         if bitrateTarget != .automatic, targetSizeMB == nil {
             let duration = try await asset.load(.duration)
-            let seconds = CMTimeGetSeconds(duration)
+            let seconds = trimRange?.durationSeconds ?? CMTimeGetSeconds(duration)
             guard seconds.isFinite, seconds > 0 else { throw VideoTranscodingError.cannotCreateExport }
             let desiredBytes = Double(bitrateTarget.rawValue) * 1_000 * seconds / 8
             guard desiredBytes < Double(Int64.max) else { throw VideoTranscodingError.cannotCreateExport }
@@ -243,6 +303,7 @@ enum VideoTranscoder {
             session.outputURL = temporaryURL
             session.outputFileType = .mp4
             session.shouldOptimizeForNetworkUse = true
+            if let trimRange { session.timeRange = trimRange.timeRange }
             if maximumFrameRate != .original {
                 let composition = try await AVMutableVideoComposition.videoComposition(withPropertiesOf: asset)
                 composition.sourceTrackIDForFrameTiming = kCMPersistentTrackID_Invalid
@@ -271,7 +332,7 @@ enum VideoTranscoder {
                 continue
             }
             foundOutputWithinLimit = true
-            guard resultSize.int64Value < sourceSize.int64Value else {
+            guard !requiresSmallerOutput || resultSize.int64Value < sourceSize.int64Value else {
                 lastExportError = VideoTranscodingError.outputNotSmaller
                 continue
             }
@@ -344,14 +405,109 @@ enum VideoTranscoder {
         return composition
     }
 
-    private static func uniqueOutputURL(in directory: URL, stem: String) -> URL {
+    private static func uniqueOutputURL(in directory: URL, stem: String, suffix: String = "compressed") -> URL {
         let fileManager = FileManager.default
-        var suffix = 1
-        var candidate = directory.appendingPathComponent("\(stem)-compressed.mp4")
+        var counter = 1
+        var candidate = directory.appendingPathComponent("\(stem)-\(suffix).mp4")
         while fileManager.fileExists(atPath: candidate.path) {
-            suffix += 1
-            candidate = directory.appendingPathComponent("\(stem)-compressed-\(suffix).mp4")
+            counter += 1
+            candidate = directory.appendingPathComponent("\(stem)-\(suffix)-\(counter).mp4")
         }
+        return candidate
+    }
+}
+
+enum AudioExtractionError: LocalizedError {
+    case noAudioTrack
+    case cannotCreateExport
+    case exportFailed(String)
+    case invalidTrimRange
+    case cancelled
+
+    var errorDescription: String? {
+        switch self {
+        case .noAudioTrack: return "此视频没有可提取的音轨"
+        case .cannotCreateExport: return "无法为此视频创建音频导出"
+        case .exportFailed(let message): return message
+        case .invalidTrimRange: return "音频片段范围无效，请重新选择"
+        case .cancelled: return "音频导出已取消"
+        }
+    }
+}
+
+enum AudioExtractor {
+    static func extractM4A(
+        from inputURL: URL,
+        trimRange: VideoTrimRange? = nil,
+        cancellation: VideoTranscoderCancellation? = nil,
+        outputDirectory: URL? = nil
+    ) async throws -> URL {
+        guard cancellation?.isCancelled != true else { throw AudioExtractionError.cancelled }
+        let asset = AVURLAsset(url: inputURL)
+        if let trimRange {
+            let sourceDuration = try await asset.load(.duration).seconds
+            do {
+                try trimRange.validate(against: sourceDuration)
+            } catch {
+                throw AudioExtractionError.invalidTrimRange
+            }
+        }
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        guard !audioTracks.isEmpty else {
+            throw AudioExtractionError.noAudioTrack
+        }
+        let preset = AVAssetExportPresetAppleM4A
+        guard await AVAssetExportSession.compatibility(ofExportPreset: preset, with: asset, outputFileType: .m4a),
+              let session = AVAssetExportSession(asset: asset, presetName: preset),
+              session.supportedFileTypes.contains(.m4a) else {
+            throw AudioExtractionError.cannotCreateExport
+        }
+
+        let fileManager = FileManager.default
+        let directory = outputDirectory ?? inputURL.deletingLastPathComponent()
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: directory.path, isDirectory: &isDirectory),
+              isDirectory.boolValue,
+              fileManager.isWritableFile(atPath: directory.path) else {
+            throw AudioExtractionError.exportFailed("无法写入所选输出文件夹")
+        }
+        let temporaryURL = directory.appendingPathComponent(".dropsqueeze-\(UUID().uuidString).m4a")
+        defer { try? fileManager.removeItem(at: temporaryURL) }
+        session.outputURL = temporaryURL
+        session.outputFileType = .m4a
+        session.shouldOptimizeForNetworkUse = true
+        if let trimRange { session.timeRange = trimRange.timeRange }
+
+        let sessionBox = ExportSessionBox(session)
+        cancellation?.attach(sessionBox)
+        defer { cancellation?.detach(sessionBox) }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            sessionBox.value.exportAsynchronously {
+                switch sessionBox.value.status {
+                case .completed:
+                    continuation.resume()
+                case .failed:
+                    continuation.resume(throwing: AudioExtractionError.exportFailed(sessionBox.value.error?.localizedDescription ?? "音频导出失败"))
+                case .cancelled:
+                    continuation.resume(throwing: AudioExtractionError.cancelled)
+                default:
+                    continuation.resume(throwing: AudioExtractionError.exportFailed("音频导出未能完成"))
+                }
+            }
+        }
+        guard let outputSize = try fileManager.attributesOfItem(atPath: temporaryURL.path)[.size] as? NSNumber,
+              outputSize.int64Value > 0 else {
+            throw AudioExtractionError.exportFailed("音频导出文件为空")
+        }
+
+        let stem = inputURL.deletingPathExtension().lastPathComponent
+        var candidate = directory.appendingPathComponent("\(stem)-audio.m4a")
+        var number = 2
+        while fileManager.fileExists(atPath: candidate.path) {
+            candidate = directory.appendingPathComponent("\(stem)-audio-\(number).m4a")
+            number += 1
+        }
+        try fileManager.moveItem(at: temporaryURL, to: candidate)
         return candidate
     }
 }
