@@ -300,6 +300,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var isDropZoneVisible = true
     @Published private(set) var dropRequestCount = 0
     @Published private(set) var paywallRequest: PaywallRequest?
+    @Published var latestRecognizedText: String?
 
     let settings = RulesSettings()
     let purchaseManager = PurchaseManager()
@@ -308,6 +309,7 @@ final class AppModel: ObservableObject {
     var hideDropZoneHandler: (() -> Void)?
     var dropAcceptedHandler: (() -> Void)?
     var showPaywallHandler: (() -> Void)?
+    var showFloatingPillHandler: (() -> Void)?
     var compressionNotificationHandler: ((CompressionNotice) -> Void)?
 
     private enum FileSource: Equatable {
@@ -354,6 +356,7 @@ final class AppModel: ObservableObject {
     private let outputFolderBookmarkKey = "outputFolderBookmark"
     private let historyKey = "compressionHistory"
     private let totalSavedKey = "totalSavedBytes"
+    private let totalCountKey = "totalCompressionCount"
     private let dailyCountKey = "dailyCompressionCount"
     private let dailyCountDateKey = "dailyCompressionDate"
 
@@ -365,6 +368,10 @@ final class AppModel: ObservableObject {
     func isFolderWatching(_ folder: MonitoredFolder) -> Bool { directoryWatchers[folder.id] != nil }
     var watchedFolderPath: String? {
         monitoredFolders.first(where: { directoryWatchers[$0.id] != nil })?.path
+    }
+
+    var totalCompressionCount: Int {
+        defaults.integer(forKey: totalCountKey)
     }
 
     var todayCompressionCount: Int {
@@ -820,7 +827,8 @@ final class AppModel: ObservableObject {
 
     private func isSupportedDroppedFile(_ url: URL) -> Bool {
         let extensionName = url.pathExtension.lowercased()
-        return ImageCompressor.typeIdentifier(forFileExtension: extensionName) != nil
+        return extensionName == "svg"
+            || ImageCompressor.typeIdentifier(forFileExtension: extensionName) != nil
             || ImageCompressor.detectedTypeIdentifier(at: url) != nil
             || ["mov", "mp4", "m4v", "pdf"].contains(extensionName)
     }
@@ -906,7 +914,8 @@ final class AppModel: ObservableObject {
             throw ShortcutCompressionError.pdfRequiresPro
         }
         let shortcutContainsImage = validURLs.contains { url in
-            ImageCompressor.detectedTypeIdentifier(at: url) != nil
+            SVGCompressor.isSVG(url: url)
+                || ImageCompressor.detectedTypeIdentifier(at: url) != nil
                 || ImageCompressor.typeIdentifier(forFileExtension: url.pathExtension) != nil
         }
         let shortcutContainsGIFEligibleVideo = validURLs.contains { $0.pathExtension.lowercased() == "mov" }
@@ -967,6 +976,13 @@ final class AppModel: ObservableObject {
         history = []
         defaults.removeObject(forKey: historyKey)
         statusMessage = "本地压缩历史已清除"
+    }
+
+    func copyLatestRecognizedText() {
+        guard let text = latestRecognizedText, !text.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
     }
 
     func openOutput(for item: HistoryItem) {
@@ -1158,6 +1174,12 @@ final class AppModel: ObservableObject {
                 resultBytes: Int64(result.data.count),
                 undoID: actionID
             ))
+            if let nsImage = NSImage(data: result.data) {
+                Task { @MainActor [weak self] in
+                    self?.latestRecognizedText = await VisionTextExtractor.shared.extractText(from: nsImage)
+                }
+            }
+            showFloatingPillHandler?()
         } catch {
             statusMessage = "剪贴板图片未处理：\(error.localizedDescription)"
         }
@@ -1226,8 +1248,9 @@ final class AppModel: ObservableObject {
     ) async -> FileCompressionOutcome? {
         guard url.isFileURL else { return nil }
         let ext = url.pathExtension.lowercased()
+        let isSVG = SVGCompressor.isSVG(url: url)
         let detectedImageType = ImageCompressor.detectedTypeIdentifier(at: url)
-        let isImage = detectedImageType != nil || ImageCompressor.typeIdentifier(forFileExtension: ext) != nil
+        let isImage = isSVG || detectedImageType != nil || ImageCompressor.typeIdentifier(forFileExtension: ext) != nil
         let isVideo = ext == "mov" || ext == "mp4" || ext == "m4v"
         let isPDF = ext == "pdf"
         guard isImage || isVideo || isPDF else {
@@ -1348,6 +1371,19 @@ final class AppModel: ObservableObject {
                 outputURL = compressed.outputURL
                 originalSize = compressed.originalByteCount
                 resultSize = compressed.resultByteCount
+            } else if isSVG {
+                let output = try await Task.detached(priority: .utility) { () throws -> (URL, CompressedSVG)? in
+                    guard let compressed = try SVGCompressor.compressFile(at: url) else { return nil }
+                    return (try SVGCompressor.writeCompressedSVG(compressed, beside: url, in: outputDirectory), compressed)
+                }.value
+                guard let (writtenURL, compressed) = output else {
+                    if reportStatus { statusMessage = "\(url.lastPathComponent)：没有更小的结果，原件保留" }
+                    return nil
+                }
+                outputURL = writtenURL
+                originalSize = Int64(compressed.originalByteCount)
+                resultSize = Int64(compressed.data.count)
+                didConvertImageFormat = false
             } else if isImage {
                 let options: ImageCompressionOptions
                 if let profileOverride {
@@ -1444,6 +1480,13 @@ final class AppModel: ObservableObject {
                 didConvertFormat: didConvertImageFormat
             )
             if notifyOnSuccess { notifyFileCompression([outcome]) }
+            if isImage && !isSVG {
+                let targetURL = outputURL
+                Task { @MainActor [weak self] in
+                    self?.latestRecognizedText = await VisionTextExtractor.shared.extractText(from: targetURL)
+                }
+            }
+            showFloatingPillHandler?()
             return outcome
         } catch {
             if reportStatus {
@@ -1463,6 +1506,7 @@ final class AppModel: ObservableObject {
         history = Array(history.prefix(10))
         defaults.set(try? PropertyListEncoder().encode(history), forKey: historyKey)
         defaults.set(totalSavedBytes + item.savedBytes, forKey: totalSavedKey)
+        defaults.set(totalCompressionCount + 1, forKey: totalCountKey)
         usageTracker.recordSavedBytes(item.savedBytes)
         if let date = defaults.object(forKey: dailyCountDateKey) as? Date,
            Calendar.current.isDateInToday(date) {

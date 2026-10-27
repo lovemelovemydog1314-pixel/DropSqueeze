@@ -101,8 +101,9 @@ struct FolderWatchRule: Codable, Equatable {
 
     func accepts(_ url: URL, size: Int64) -> Bool {
         let ext = url.pathExtension.lowercased()
+        let isSVG = ext == "svg"
         let isKnownImageExtension = ImageCompressor.typeIdentifier(forFileExtension: ext) != nil
-        let isImage = isKnownImageExtension
+        let isImage = isKnownImageExtension || isSVG
             || (!isKnownImageExtension && !["mov", "mp4", "m4v", "pdf"].contains(ext)
                 && ImageCompressor.detectedTypeIdentifier(at: url) != nil)
         let isVideo = ["mov", "mp4", "m4v"].contains(ext)

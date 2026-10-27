@@ -21,6 +21,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
     private var dropZonePanel: DropZonePanelController?
     private var paywallWindow: PaywallWindowController?
     private var compressionNotificationController: CompressionNotificationController?
+    private var floatingPillPanel: FloatingPillPanelController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -33,6 +34,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
         }
         compressionNotificationController = notifications
         dropZonePanel = DropZonePanelController(model: model)
+        floatingPillPanel = FloatingPillPanelController(model: model)
         paywallWindow = PaywallWindowController(model: model)
         model.showPaywallHandler = { [weak self] in self?.paywallWindow?.show() }
         model.start()

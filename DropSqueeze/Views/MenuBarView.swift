@@ -5,6 +5,7 @@ struct MenuBarView: View {
     @ObservedObject var model: AppModel
     @State private var selectedTab = 0
     @State private var selectedComparison: HistoryItem?
+    @State private var isShowingSavingsCard = false
 
     var body: some View {
         VStack(spacing: 10) {
@@ -24,6 +25,9 @@ struct MenuBarView: View {
         .frame(width: 370, height: 570)
         .sheet(item: $selectedComparison) { item in
             OutputComparisonView(item: item)
+        }
+        .sheet(isPresented: $isShowingSavingsCard) {
+            SavingsCardView(model: model)
         }
     }
 
@@ -129,7 +133,18 @@ struct MenuBarView: View {
             Divider()
 
             LabeledContent("今日已压缩", value: "\(model.todayCompressionCount) 项")
-            LabeledContent("累计节省", value: model.formattedSize(model.totalSavedBytes))
+            HStack {
+                LabeledContent("累计节省", value: model.formattedSize(model.totalSavedBytes))
+                Spacer()
+                Button {
+                    isShowingSavingsCard = true
+                } label: {
+                    Label("成就战报", systemImage: "sparkles")
+                        .font(.caption2.weight(.medium))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+            }
             if !model.purchaseManager.isPro {
                 LabeledContent("自动额度", value: "图片 \(model.automaticImageCountToday)/15 · 视频 \(model.automaticVideoCountToday)/3")
                     .font(.caption)
@@ -194,6 +209,17 @@ struct MenuBarView: View {
                                         Button("在 Finder 中显示") { model.revealOutput(for: item) }
                                         if item.sourcePath != nil {
                                             Button("对比原件与结果") { selectedComparison = item }
+                                        }
+                                        if item.kind == .imageFile, let path = item.outputPath {
+                                            Button("识别并拷贝文字 (OCR)") {
+                                                Task {
+                                                    let text = await VisionTextExtractor.shared.extractText(from: URL(fileURLWithPath: path))
+                                                    if let text, !text.isEmpty {
+                                                        NSPasteboard.general.clearContents()
+                                                        NSPasteboard.general.setString(text, forType: .string)
+                                                    }
+                                                }
+                                            }
                                         }
                                     } label: {
                                         Image(systemName: "ellipsis.circle")

@@ -222,7 +222,7 @@ private struct DropZoneView: View {
     }
 
     private var supportedTypesText: some View {
-        Text("拖入图片 · GIF · PDF · MOV · MP4 · M4V")
+        Text("拖入图片 · SVG · GIF · PDF · MOV · MP4 · M4V")
             .font(.system(size: 10))
             .foregroundStyle(.tertiary)
             .frame(maxWidth: .infinity, alignment: .leading)

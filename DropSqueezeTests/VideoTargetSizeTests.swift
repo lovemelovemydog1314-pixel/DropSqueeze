@@ -2,6 +2,7 @@ import AVFoundation
 import AppKit
 import CoreVideo
 import PDFKit
+import SwiftUI
 import XCTest
 @testable import DropSqueeze
 
@@ -537,6 +538,94 @@ final class VideoTargetSizeTests: XCTestCase {
         let outputAsset = AVURLAsset(url: outputURL)
         let audioTracks = try await outputAsset.loadTracks(withMediaType: .audio)
         XCTAssertTrue(audioTracks.isEmpty, "When includesAudio is false, output video must have 0 audio tracks.")
+    }
+
+    func testSVGMinifierCleansMetadataAndExcessivePrecision() throws {
+        let rawSVG = """
+        <?xml version="1.0" encoding="utf-8"?>
+        <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+        <!-- Generator: Adobe Illustrator 28.0, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
+        <svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" viewBox="0 0 100 100">
+            <metadata>
+                <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+                    <cc:Work rdf:about="" />
+                </rdf:RDF>
+            </metadata>
+            <path data-name="Layer_1" d="M 10.123456 20.987654 L 30.555555 40.777777 Z" />
+        </svg>
+        """
+        guard let data = rawSVG.data(using: .utf8) else {
+            XCTFail("Failed to convert raw SVG to Data")
+            return
+        }
+
+        let compressed = try XCTUnwrap(SVGCompressor.compress(data: data))
+        XCTAssertLessThan(compressed.data.count, data.count)
+        guard let minified = String(data: compressed.data, encoding: .utf8) else {
+            XCTFail("Failed to decode minified SVG")
+            return
+        }
+        XCTAssertFalse(minified.contains("<?xml"))
+        XCTAssertFalse(minified.contains("<!DOCTYPE"))
+        XCTAssertFalse(minified.contains("Adobe Illustrator"))
+        XCTAssertFalse(minified.contains("<metadata>"))
+        XCTAssertFalse(minified.contains("inkscape"))
+        XCTAssertFalse(minified.contains("data-name"))
+        XCTAssertFalse(minified.contains("10.123456"))
+        XCTAssertTrue(minified.contains("10.12"))
+        XCTAssertTrue(minified.contains("<path d="))
+
+        let testURL = URL(fileURLWithPath: "/tmp/sample.svg")
+        XCTAssertTrue(SVGCompressor.isSVG(url: testURL))
+        XCTAssertFalse(SVGCompressor.isSVG(url: URL(fileURLWithPath: "/tmp/sample.png")))
+    }
+
+    @MainActor
+    func testSavingsCardGraphicRendersSuccessfully() {
+        let suiteName = "DropSqueezeTests.card.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let model = AppModel()
+        let graphic = SavingsCardGraphic(model: model).frame(width: 380, height: 260)
+        let renderer = ImageRenderer(content: graphic)
+        renderer.scale = 2.0
+        XCTAssertNotNil(renderer.nsImage, "SavingsCardGraphic must render to an NSImage")
+    }
+
+    @MainActor
+    func testAppModelRecognizedTextCopying() {
+        let model = AppModel()
+        XCTAssertNil(model.latestRecognizedText)
+
+        // Set recognized text
+        let testString = "DROP SQUEEZE TEST OCR"
+        model.latestRecognizedText = testString
+        XCTAssertEqual(model.latestRecognizedText, testString)
+
+        model.copyLatestRecognizedText()
+        let copied = NSPasteboard.general.string(forType: .string)
+        XCTAssertEqual(copied, testString)
+    }
+
+    func testVisionTextExtractorCanRecognizeText() async throws {
+        let size = NSSize(width: 300, height: 100)
+        let image = NSImage(size: size, flipped: false) { rect in
+            NSColor.white.setFill()
+            rect.fill()
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.boldSystemFont(ofSize: 28),
+                .foregroundColor: NSColor.black
+            ]
+            let string = NSAttributedString(string: "HELLO OCR 2026", attributes: attrs)
+            string.draw(at: NSPoint(x: 20, y: 35))
+            return true
+        }
+
+        let recognized = await VisionTextExtractor.shared.extractText(from: image)
+        XCTAssertNotNil(recognized)
+        let text = recognized ?? ""
+        XCTAssertTrue(text.contains("HELLO") || text.contains("OCR") || text.contains("2026"), "Vision text recognition should detect the rendered text, got: \(text)")
     }
 
     private enum VideoFixtureError: Error {
