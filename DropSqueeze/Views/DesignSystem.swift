@@ -115,6 +115,74 @@ extension View {
     }
 }
 
+// MARK: - App Brand Icon
+
+struct AppBrandIcon: View {
+    var size: CGFloat = 28
+    var cornerRadius: CGFloat? = nil
+
+    private var squircleRadius: CGFloat {
+        cornerRadius ?? (size * 0.224)
+    }
+
+    private var iconImage: NSImage? {
+        if let img = NSImage(named: "AppLogo") { return img }
+        if let img = NSImage(named: "AppIcon") { return img }
+        if let bundleURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let img = NSImage(contentsOf: bundleURL) {
+            return img
+        }
+        return NSApp.applicationIconImage
+    }
+
+    var body: some View {
+        ZStack {
+            if let image = iconImage {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: squircleRadius, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: squircleRadius, style: .continuous)
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.35),
+                                        Color.white.opacity(0.08)
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                ),
+                                lineWidth: 0.75
+                            )
+                    )
+                    .shadow(color: Color.black.opacity(0.2), radius: 2, y: 1)
+            } else {
+                RoundedRectangle(cornerRadius: squircleRadius, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.accentColor, Color(red: 0.08, green: 0.40, blue: 0.90)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: size, height: size)
+                    .overlay(
+                        Image(systemName: "arrow.down.right.and.arrow.up.left")
+                            .font(.system(size: size * 0.48, weight: .bold))
+                            .foregroundStyle(.white)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: squircleRadius, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.3), lineWidth: 0.75)
+                    )
+                    .shadow(color: Color.accentColor.opacity(0.35), radius: 3, y: 1)
+            }
+        }
+    }
+}
+
 // MARK: - Micro Status Badges
 
 struct StatusBadge: View {
@@ -151,6 +219,7 @@ struct MetricCounterCard: View {
     var subtitle: String? = nil
     var icon: String? = nil
     var tintColor: Color = .primary
+    @State private var isHovered = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -179,10 +248,21 @@ struct MetricCounterCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(isHovered ? Color.white.opacity(0.07) : Color.white.opacity(0.04))
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.75)
+                .strokeBorder(
+                    isHovered ? Color.white.opacity(0.16) : Color.white.opacity(0.08),
+                    lineWidth: 0.75
+                )
         )
+        .onHover { hovering in
+            withAnimation(DesignTokens.quickSpring) {
+                isHovered = hovering
+            }
+        }
     }
 }

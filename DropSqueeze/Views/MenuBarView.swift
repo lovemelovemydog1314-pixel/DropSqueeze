@@ -20,11 +20,12 @@ struct MenuBarView: View {
                 .padding(.bottom, 10)
 
             // Segmented Tab Picker
-            Picker(L10n.tr("页面"), selection: $selectedTab) {
+            Picker("", selection: $selectedTab) {
                 Text(L10n.tr("概览")).tag(0)
                 Text(L10n.tr("设置")).tag(1)
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
             .padding(.horizontal, 14)
             .padding(.bottom, 12)
 
@@ -53,15 +54,8 @@ struct MenuBarView: View {
     // MARK: - Header Section
 
     private var headerSection: some View {
-        HStack(spacing: 9) {
-            ZStack {
-                Circle()
-                    .fill(Color.accentColor.opacity(0.16))
-                    .frame(width: 28, height: 28)
-                Image(systemName: "arrow.down.right.and.arrow.up.left")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(Color.accentColor)
-            }
+        HStack(spacing: 10) {
+            AppBrandIcon(size: 30)
 
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
@@ -88,12 +82,24 @@ struct MenuBarView: View {
                         Text(L10n.tr("升级 Pro"))
                             .font(.system(size: 11, weight: .semibold))
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4.5)
+                    .background(
+                        LinearGradient(
+                            colors: [Color.accentColor, Color(red: 0.10, green: 0.44, blue: 0.95)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ),
+                        in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.3), lineWidth: 0.75)
+                    )
                     .foregroundStyle(.white)
+                    .shadow(color: Color.accentColor.opacity(0.3), radius: 3, y: 1)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.tactile)
             }
         }
     }
@@ -185,11 +191,11 @@ struct MenuBarView: View {
     private var idleStatusCard: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(Color.green)
+                .fill(Color(red: 0.22, green: 0.82, blue: 0.46))
                 .frame(width: 7, height: 7)
                 .shadow(color: Color.green.opacity(0.4), radius: 3)
 
-            Text(model.statusMessage)
+            Text(L10n.tr(model.statusMessage))
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
@@ -200,13 +206,17 @@ struct MenuBarView: View {
                 Button(L10n.tr("撤销剪贴板")) {
                     model.undoClipboardCompression()
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.tactile)
                 .controlSize(.mini)
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.06), lineWidth: 0.75)
+        )
     }
 
     // MARK: - Metric Dashboard
@@ -297,6 +307,10 @@ struct MenuBarView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 7)
                     .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(Color.accentColor.opacity(0.25), lineWidth: 1)
+                    )
             }
             .buttonStyle(.tactile)
             .help(L10n.tr("剪辑片段、导出 GIF 或提取音频"))
@@ -354,7 +368,7 @@ struct MenuBarView: View {
                 .scrollIndicators(.hidden)
                 .frame(height: 132)
             } else {
-                Text("收集已关闭；当前收集项会保留到退出应用或手动清空。")
+                Text(L10n.tr("收集已关闭；当前收集项会保留到退出应用或手动清空。"))
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 4)
@@ -374,9 +388,9 @@ struct MenuBarView: View {
         HStack(spacing: 9) {
             ZStack {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.white.opacity(0.06))
+                    .fill(model.isWatchingFolder ? Color.accentColor.opacity(0.14) : Color.white.opacity(0.06))
                     .frame(width: 26, height: 26)
-                Image(systemName: model.isWatchingFolder ? "folder.badge.eye" : "folder")
+                Image(systemName: model.isWatchingFolder ? "folder.badge.gearshape" : "folder")
                     .font(.system(size: 12))
                     .foregroundStyle(model.isWatchingFolder ? Color.accentColor : Color.secondary)
             }
@@ -408,11 +422,7 @@ struct MenuBarView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.06), lineWidth: 0.75)
-        )
+        .interactiveCard(cornerRadius: 8)
     }
 
     // MARK: - Batch Queue Section
@@ -573,13 +583,23 @@ struct MenuBarView: View {
             // Saved Badge
             if item.kind == .imageFile && item.resultBytes >= item.originalBytes {
                 Text(L10n.tr("格式转换"))
-                    .font(.system(size: 10))
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1.5)
+                    .background(Color.white.opacity(0.06), in: Capsule())
             } else {
                 Text("−\(model.formattedSize(item.savedBytes))")
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1.5)
+                    .background(Color.accentColor.opacity(0.12), in: Capsule())
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(Color.accentColor.opacity(0.24), lineWidth: 0.5)
+                    )
             }
 
             // Quick Menu
@@ -620,22 +640,31 @@ struct MenuBarView: View {
 
     private var footerSection: some View {
         HStack {
-            Text("DropSqueeze v1.2")
-                .font(.system(size: 9))
-                .foregroundStyle(.tertiary)
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(Color.accentColor.opacity(0.8))
+                    .frame(width: 4, height: 4)
+                Text("DropSqueeze v1.2")
+                    .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                    .foregroundStyle(.tertiary)
+            }
 
             Spacer()
 
             Button {
                 NSApp.terminate(nil)
             } label: {
-                HStack(spacing: 3) {
+                HStack(spacing: 4) {
                     Text(L10n.tr("退出"))
                     Text("⌘Q")
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.tertiary)
                 }
-                .font(.system(size: 10))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
             }
             .buttonStyle(.tactile)
         }

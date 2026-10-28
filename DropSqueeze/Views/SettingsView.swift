@@ -416,7 +416,7 @@ struct SettingsView: View {
                 }
 
                 // Section: Monitored Folders
-                settingsCard(title: L10n.tr("文件夹实时自动监控"), icon: "folder.badge.eye") {
+                settingsCard(title: L10n.tr("文件夹实时自动监控"), icon: "folder.badge.gearshape") {
                     VStack(alignment: .leading, spacing: 10) {
                         if model.monitoredFolders.isEmpty {
                             Text(L10n.tr("尚未添加监控文件夹。可将系统的「截屏」或「录屏」存放目录加入监控。"))
@@ -427,7 +427,7 @@ struct SettingsView: View {
                         ForEach(model.monitoredFolders) { folder in
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack(spacing: 8) {
-                                    Image(systemName: model.isFolderWatching(folder) ? "folder.badge.eye" : "folder")
+                                    Image(systemName: model.isFolderWatching(folder) ? "folder.badge.gearshape" : "folder")
                                         .foregroundStyle(Color.accentColor)
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(folder.displayName)
@@ -563,17 +563,10 @@ struct SettingsView: View {
     // MARK: - Pro Status Header
 
     private var proStatusHeader: some View {
-        HStack(spacing: 10) {
-            ZStack {
-                Circle()
-                    .fill(purchaseManager.isPro ? Color.accentColor.opacity(0.2) : Color.white.opacity(0.08))
-                    .frame(width: 32, height: 32)
-                Image(systemName: purchaseManager.isPro ? "checkmark.seal.fill" : "sparkles")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(purchaseManager.isPro ? Color.accentColor : Color.primary)
-            }
+        HStack(spacing: 11) {
+            AppBrandIcon(size: 34)
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(purchaseManager.isPro ? L10n.tr("DropSqueeze Pro 已激活") : L10n.tr("DropSqueeze 免费版"))
                         .font(.system(size: 13, weight: .bold))
@@ -619,10 +612,15 @@ struct SettingsView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
+            HStack(spacing: 7) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.12))
+                        .frame(width: 20, height: 20)
+                    Image(systemName: icon)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
                 Text(title)
                     .font(.system(size: 12, weight: .bold))
             }
@@ -631,7 +629,7 @@ struct SettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)

@@ -143,14 +143,7 @@ struct SavingsCardGraphic: View {
             VStack(alignment: .leading, spacing: 14) {
                 // Brand Header
                 HStack(spacing: 8) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.accentColor.opacity(0.2))
-                            .frame(width: 24, height: 24)
-                        Image(systemName: "arrow.down.right.and.arrow.up.left")
-                            .font(.system(size: 11, weight: .heavy))
-                            .foregroundStyle(Color.accentColor)
-                    }
+                    AppBrandIcon(size: 26)
 
                     Text("DropSqueeze")
                         .font(.system(size: 13, weight: .bold))

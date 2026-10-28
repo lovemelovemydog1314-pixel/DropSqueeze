@@ -166,7 +166,7 @@ struct DropZoneView: View {
                     LinearGradient(
                         colors: [
                             isTargeted ? Color.accentColor : Color.white.opacity(0.24),
-                            isTargeted ? Color.accentColor.opacity(0.5) : Color.white.opacity(0.08)
+                            isTargeted ? Color.accentColor.opacity(0.6) : Color.white.opacity(0.08)
                         ],
                         startPoint: .top,
                         endPoint: .bottom
@@ -174,7 +174,17 @@ struct DropZoneView: View {
                     lineWidth: isTargeted ? 2 : 1
                 )
         }
-        .scaleEffect(isTargeted ? 1.03 : 1.0)
+        .overlay {
+            if isTargeted {
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .strokeBorder(
+                        Color.accentColor.opacity(0.8),
+                        style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])
+                    )
+                    .padding(3)
+            }
+        }
+        .scaleEffect(isTargeted ? 1.025 : 1.0)
         .animation(DesignTokens.quickSpring, value: isTargeted)
         .onDrop(of: [UTType.fileURL], isTargeted: $isTargeted, perform: receiveFiles)
         .accessibilityElement(children: .combine)
@@ -186,17 +196,16 @@ struct DropZoneView: View {
     @ViewBuilder
     private var headerBar: some View {
         HStack(spacing: 8) {
-            ZStack {
-                Circle()
-                    .fill(model.isProcessing ? Color.accentColor.opacity(0.2) : Color.white.opacity(0.08))
+            if model.isProcessing {
+                ProgressView().controlSize(.mini)
                     .frame(width: 22, height: 22)
-                if model.isProcessing {
-                    ProgressView().controlSize(.mini)
-                } else {
-                    Image(systemName: "arrow.down.to.line.compact")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(isTargeted ? Color.accentColor : Color.primary)
-                }
+            } else if isTargeted {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 22, height: 22)
+            } else {
+                AppBrandIcon(size: 22)
             }
 
             Text(model.isProcessing ? L10n.tr("正在静默压缩…") : (isTargeted ? L10n.tr("松开立即开始压缩") : L10n.tr("DropSqueeze 压缩舱")))
@@ -219,7 +228,7 @@ struct DropZoneView: View {
                     .frame(width: 20, height: 20)
                     .background(Color.white.opacity(0.05), in: Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.tactile)
             .help(L10n.tr("隐藏压缩舱"))
         }
     }

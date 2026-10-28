@@ -124,9 +124,16 @@ struct FloatingPillView: View {
 
                     if let item = model.history.first {
                         Text("−\(model.formattedSize(item.savedBytes))")
-                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .font(.system(size: 10.5, weight: .bold, design: .rounded))
                             .monospacedDigit()
                             .foregroundStyle(Color.accentColor)
+                            .padding(.horizontal, 5.5)
+                            .padding(.vertical, 1.5)
+                            .background(Color.accentColor.opacity(0.14), in: Capsule())
+                            .overlay(
+                                Capsule()
+                                    .strokeBorder(Color.accentColor.opacity(0.28), lineWidth: 0.5)
+                            )
                     }
                 }
 
@@ -185,7 +192,7 @@ struct FloatingPillView: View {
                     .frame(width: 18, height: 18)
                     .background(Color.white.opacity(0.06), in: Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.tactile)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
