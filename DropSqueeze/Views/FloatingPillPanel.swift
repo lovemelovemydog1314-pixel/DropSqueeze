@@ -76,8 +76,9 @@ final class FloatingPillPanelController {
     }
 }
 
-private struct FloatingPillView: View {
+struct FloatingPillView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var l10n = LocalizationManager.shared
     let onClose: () -> Void
     @State private var copiedTextNotice = false
 
@@ -103,7 +104,7 @@ private struct FloatingPillView: View {
                 }
                 .contentShape(Circle())
                 .onDrag { NSItemProvider(object: url as NSURL) }
-                .help("按住此图标直接拖出压缩文件")
+                .help(L10n.tr("按住直接拖放"))
             } else {
                 ZStack {
                     Circle()
@@ -118,7 +119,7 @@ private struct FloatingPillView: View {
             // Description Info
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
-                    Text("压缩完成")
+                    Text(L10n.tr("压缩完成"))
                         .font(.system(size: 11, weight: .bold))
 
                     if let item = model.history.first {
@@ -130,12 +131,12 @@ private struct FloatingPillView: View {
                 }
 
                 if let outputURL = model.latestOutputURL {
-                    Text("直接拖拽放入微信/邮件 · \(outputURL.lastPathComponent)")
+                    Text(L10n.tr("直接拖拽放入微信/邮件 · %@", outputURL.lastPathComponent))
                         .font(.system(size: 9.5))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 } else {
-                    Text("已替换剪贴板 · 按 ⌘V 立即粘贴")
+                    Text(L10n.tr("已替换剪贴板 · 按 ⌘V 立即粘贴"))
                         .font(.system(size: 9.5))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -160,7 +161,7 @@ private struct FloatingPillView: View {
                     HStack(spacing: 3) {
                         Image(systemName: copiedTextNotice ? "checkmark" : "text.viewfinder")
                             .font(.system(size: 9, weight: .bold))
-                        Text(copiedTextNotice ? "已拷贝" : "提取文字")
+                        Text(copiedTextNotice ? L10n.tr("已拷贝") : L10n.tr("提取文字"))
                             .font(.system(size: 10, weight: .semibold))
                     }
                     .padding(.horizontal, 8)
@@ -173,7 +174,7 @@ private struct FloatingPillView: View {
                     .foregroundStyle(Color.accentColor)
                 }
                 .buttonStyle(.tactile)
-                .help("一键复制截图中识别到的纯文本")
+                .help(L10n.tr("一键复制截图中识别到的纯文本"))
             }
 
             // Close button

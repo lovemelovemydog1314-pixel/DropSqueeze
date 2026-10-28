@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SavingsCardView: View {
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var l10n = LocalizationManager.shared
     @ObservedObject var model: AppModel
     @State private var copySuccessNotice = false
 
@@ -14,11 +15,11 @@ struct SavingsCardView: View {
                     Image(systemName: "sparkles")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(Color.accentColor)
-                    Text("省流战报与成就")
+                    Text(L10n.tr("省流战报与成就"))
                         .font(.system(size: 16, weight: .bold))
                 }
                 Spacer()
-                Button("完成") { dismiss() }
+                Button(L10n.tr("完成")) { dismiss() }
                     .buttonStyle(.tactile)
                     .keyboardShortcut(.defaultAction)
             }
@@ -41,7 +42,7 @@ struct SavingsCardView: View {
                     HStack(spacing: 6) {
                         Image(systemName: copySuccessNotice ? "checkmark" : "doc.on.doc")
                             .font(.system(size: 11, weight: .bold))
-                        Text(copySuccessNotice ? "已拷贝到剪贴板✓" : "拷贝战报卡片")
+                        Text(copySuccessNotice ? L10n.tr("已拷贝到剪贴板✓") : L10n.tr("拷贝战报卡片"))
                             .font(.system(size: 12, weight: .semibold))
                     }
                     .padding(.horizontal, 14)
@@ -57,7 +58,7 @@ struct SavingsCardView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "square.and.arrow.down")
                             .font(.system(size: 11, weight: .bold))
-                        Text("保存高清图片")
+                        Text(L10n.tr("保存高清图片"))
                             .font(.system(size: 12, weight: .semibold))
                     }
                     .padding(.horizontal, 14)
@@ -160,7 +161,7 @@ struct SavingsCardGraphic: View {
                     HStack(spacing: 4) {
                         Image(systemName: "sparkles")
                             .font(.system(size: 9))
-                        Text("省流战报")
+                        Text(L10n.tr("省流战报"))
                             .font(.system(size: 10, weight: .bold))
                     }
                     .padding(.horizontal, 8)
@@ -175,7 +176,7 @@ struct SavingsCardGraphic: View {
 
                 // Giant Hero Stats
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("累计已为你省下")
+                    Text(L10n.tr("累计已为你省下"))
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.white.opacity(0.6))
 
@@ -194,18 +195,18 @@ struct SavingsCardGraphic: View {
                 // 3-Column Metrics Grid
                 HStack(spacing: 10) {
                     metricBlock(
-                        title: "总处理项",
-                        value: "\(model.totalCompressionCount) 项",
+                        title: L10n.tr("总处理项"),
+                        value: "\(model.totalCompressionCount) \(L10n.tr("items_unit"))",
                         icon: "square.stack.3d.down.right.fill"
                     )
                     metricBlock(
-                        title: "本周节省",
+                        title: L10n.tr("本周节省"),
                         value: model.formattedSize(model.weeklySavedBytes),
                         icon: "bolt.fill"
                     )
                     metricBlock(
-                        title: "释放原图约",
-                        value: "\(max(1, model.totalSavedBytes / 5_000_000)) 张",
+                        title: L10n.tr("释放原图约"),
+                        value: L10n.tr("约 %d 张", max(1, model.totalSavedBytes / 5_000_000)),
                         icon: "photo.stack.fill"
                     )
                 }
@@ -217,14 +218,14 @@ struct SavingsCardGraphic: View {
                     HStack(spacing: 4) {
                         Image(systemName: "lock.shield.fill")
                             .font(.system(size: 9))
-                        Text("100% 本地运算 · 零云端隐私泄露")
+                        Text(L10n.tr("100% 本地运算 · 零云端隐私泄露"))
                             .font(.system(size: 9, weight: .medium))
                     }
                     .foregroundStyle(.white.opacity(0.55))
 
                     Spacer()
 
-                    Text("macOS 极速静默媒体压缩")
+                    Text(L10n.tr("macOS 极速静默媒体压缩"))
                         .font(.system(size: 9))
                         .foregroundStyle(.white.opacity(0.35))
                 }

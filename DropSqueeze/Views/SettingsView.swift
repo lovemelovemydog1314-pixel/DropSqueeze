@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var l10n = LocalizationManager.shared
     @ObservedObject var settings: RulesSettings
     @ObservedObject var purchaseManager: PurchaseManager
     @State private var isShowingPrivacy = false
@@ -16,29 +17,46 @@ struct SettingsView: View {
                 // Pro Banner Card
                 proStatusHeader
 
+                // Section: Language Settings
+                settingsCard(title: L10n.tr("通用与语言"), icon: "globe") {
+                    HStack {
+                        Text(L10n.tr("界面语言"))
+                            .font(.system(size: 11, weight: .medium))
+                        Spacer()
+                        Picker("", selection: $l10n.currentLanguage) {
+                            ForEach(AppLanguage.allCases) { lang in
+                                Text(lang.displayName).tag(lang)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 150)
+                    }
+                }
+
+
                 // Section: Automatic Processing
-                settingsCard(title: "自动静默压缩", icon: "bolt.badge.automatic.fill") {
+                settingsCard(title: L10n.tr("自动静默压缩"), icon: "bolt.badge.automatic.fill") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Toggle("自动压缩剪贴板图片", isOn: Binding(
+                        Toggle(L10n.tr("自动压缩剪贴板图片"), isOn: Binding(
                             get: { settings.clipboardMonitoringEnabled },
                             set: { model.setClipboardMonitoringEnabled($0) }
                         ))
-                        Toggle("自动监控指定文件夹", isOn: Binding(
+                        Toggle(L10n.tr("自动监控指定文件夹"), isOn: Binding(
                             get: { settings.folderMonitoringEnabled },
                             set: { model.setFolderMonitoringEnabled($0) }
                         ))
-                        Toggle("压缩完成后发送系统通知", isOn: Binding(
+                        Toggle(L10n.tr("压缩完成后发送系统通知"), isOn: Binding(
                             get: { settings.notificationsEnabled },
                             set: { model.setNotificationsEnabled($0) }
                         ))
-                        Toggle("压缩完成后播放提示音", isOn: Binding(
+                        Toggle(L10n.tr("压缩完成后播放提示音"), isOn: Binding(
                             get: { settings.completionSoundEnabled },
                             set: { settings.setCompletionSoundEnabled($0) }
                         ))
 
                         if settings.completionSoundEnabled {
                             HStack(spacing: 8) {
-                                Picker("提示音效", selection: Binding(
+                                Picker(L10n.tr("提示音效"), selection: Binding(
                                     get: { CompressionFeedbackSound(rawValue: settings.completionSoundName) ?? .pop },
                                     set: { settings.setCompletionSoundName($0.rawValue) }
                                 )) {
@@ -55,32 +73,32 @@ struct SettingsView: View {
                                         .font(.system(size: 11))
                                 }
                                 .buttonStyle(.tactile)
-                                .help("试听此音效")
+                                .help(L10n.tr("试听此音效"))
                             }
                             .padding(.leading, 18)
                         }
 
-                        Toggle("启用触觉震动反馈 (Force Touch)", isOn: Binding(
+                        Toggle(L10n.tr("启用触觉震动反馈 (Force Touch)"), isOn: Binding(
                             get: { settings.hapticFeedbackEnabled },
                             set: { settings.setHapticFeedbackEnabled($0) }
                         ))
 
-                        Text("DropSqueeze 始终保留原文件并在后台静默输出更小副本；剪贴板处理不会产生冗余文件。")
+                        Text(L10n.tr("DropSqueeze 始终保留原文件并在后台静默输出更小副本；剪贴板处理不会产生冗余文件。"))
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                     }
                 }
 
                 // Section: Output Directory
-                settingsCard(title: "保存与输出目录", icon: "folder.fill") {
+                settingsCard(title: L10n.tr("保存与输出目录"), icon: "folder.fill") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
                             Image(systemName: model.outputFolderURL == nil ? "folder" : "folder.badge.gearshape")
                                 .foregroundStyle(Color.accentColor)
                             Text(
                                 model.requiresOutputFolderAuthorization
-                                    ? (model.outputFolderURL?.lastPathComponent ?? "输出文件夹无法访问")
-                                    : (model.outputFolderURL?.lastPathComponent ?? "默认保存到原文件所在同级目录")
+                                    ? (model.outputFolderURL?.lastPathComponent ?? L10n.tr("输出文件夹无法访问"))
+                                    : (model.outputFolderURL?.lastPathComponent ?? L10n.tr("默认保存到原文件所在同级目录"))
                             )
                             .font(.system(size: 11, weight: .medium))
                             .lineLimit(1)
@@ -95,18 +113,18 @@ struct SettingsView: View {
                         }
 
                         if model.requiresOutputFolderAuthorization {
-                            Text("请重新选择此文件夹授权，或恢复默认同级位置。")
+                            Text(L10n.tr("请重新选择此文件夹授权，或恢复默认同级位置。"))
                                 .font(.system(size: 10))
                                 .foregroundStyle(.orange)
                         }
 
                         HStack(spacing: 8) {
-                            Button("更改输出目录") { model.chooseOutputFolder() }
+                            Button(L10n.tr("更改输出目录")) { model.chooseOutputFolder() }
                                 .buttonStyle(.tactile)
                                 .controlSize(.small)
 
                             if model.outputFolderURL != nil || model.requiresOutputFolderAuthorization {
-                                Button("恢复默认同级") { model.resetOutputFolder() }
+                                Button(L10n.tr("恢复默认同级")) { model.resetOutputFolder() }
                                     .buttonStyle(.tactile)
                                     .controlSize(.small)
                             }
@@ -116,9 +134,9 @@ struct SettingsView: View {
                 }
 
                 // Section: Video Transcoding Settings
-                settingsCard(title: "视频压制与静音转码", icon: "film.stack.fill") {
+                settingsCard(title: L10n.tr("视频压制与静音转码"), icon: "film.stack.fill") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Picker("画质预设档位", selection: Binding(
+                        Picker(L10n.tr("画质预设档位"), selection: Binding(
                             get: { settings.videoOutputPreset },
                             set: { model.setVideoOutputPreset($0) }
                         )) {
@@ -127,7 +145,7 @@ struct SettingsView: View {
                             }
                         }
 
-                        Picker("视频编码格式", selection: Binding(
+                        Picker(L10n.tr("视频编码格式"), selection: Binding(
                             get: { settings.videoCodecPreference },
                             set: { settings.setVideoCodecPreference($0) }
                         )) {
@@ -136,7 +154,7 @@ struct SettingsView: View {
                             }
                         }
 
-                        Picker("目标码率品质", selection: Binding(
+                        Picker(L10n.tr("目标码率品质"), selection: Binding(
                             get: { settings.videoBitrateTarget },
                             set: { settings.setVideoBitrateTarget($0) }
                         )) {
@@ -145,7 +163,7 @@ struct SettingsView: View {
                             }
                         }
 
-                        Picker("帧率上限限制", selection: Binding(
+                        Picker(L10n.tr("帧率上限限制"), selection: Binding(
                             get: { settings.videoFrameRate },
                             set: { settings.setVideoFrameRate($0) }
                         )) {
@@ -154,15 +172,15 @@ struct SettingsView: View {
                             }
                         }
 
-                        Toggle("保留视频原音频轨道", isOn: Binding(
+                        Toggle(L10n.tr("保留视频原音频轨道"), isOn: Binding(
                             get: { settings.videoIncludesAudio },
                             set: { settings.setVideoIncludesAudio($0) }
                         ))
 
                         HStack(spacing: 8) {
-                            Text("自定义体积上限")
+                            Text(L10n.tr("自定义体积上限"))
                                 .font(.system(size: 11))
-                            TextField("留空使用预设", text: $videoMaximumSizeText)
+                            TextField(L10n.tr("留空使用预设"), text: $videoMaximumSizeText)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 108)
                                 .onAppear {
@@ -195,16 +213,16 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
 
-                        Text("关闭保留音频将自动剥离音频音轨，录屏体积可减小 30%–60% 并彻底消除环境杂音。")
+                        Text(L10n.tr("关闭保留音频将自动剥离音频音轨，录屏体积可减小 30%–60% 并彻底消除环境杂音。"))
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                     }
                 }
 
                 // Section: Preset Scenarios & Profiles
-                settingsCard(title: "平台一键预设与方案", icon: "slider.horizontal.3") {
+                settingsCard(title: L10n.tr("平台一键预设与方案"), icon: "slider.horizontal.3") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("一键应用符合各主流工作流的硬指标参数配置：")
+                        Text(L10n.tr("一键应用符合各主流工作流的硬指标参数配置："))
                             .font(.system(size: 10.5))
                             .foregroundStyle(.secondary)
 
@@ -222,7 +240,7 @@ struct SettingsView: View {
                         HStack(spacing: 8) {
                             TextField("方案名称（例如：微信公众号图）", text: $newProfileName)
                                 .textFieldStyle(.roundedBorder)
-                            Button("保存当前配置") {
+                            Button(L10n.tr("保存当前配置")) {
                                 guard settings.saveCurrentProfile(name: newProfileName) != nil else { return }
                                 newProfileName = ""
                             }
@@ -239,7 +257,7 @@ struct SettingsView: View {
                                             .font(.system(size: 11, weight: .medium))
                                             .lineLimit(1)
                                         Spacer()
-                                        Button("应用") { model.applySavedProfile(profile) }
+                                        Button(L10n.tr("应用")) { model.applySavedProfile(profile) }
                                             .buttonStyle(.tactile)
                                             .controlSize(.mini)
                                         Button {
@@ -262,9 +280,9 @@ struct SettingsView: View {
                 }
 
                 // Section: Image Compression Strategy
-                settingsCard(title: "图片与动图压缩", icon: "photo.fill") {
+                settingsCard(title: L10n.tr("图片与动图压缩"), icon: "photo.fill") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Picker("文件输出格式", selection: Binding(
+                        Picker(L10n.tr("文件输出格式"), selection: Binding(
                             get: { settings.imageFileOutputFormat },
                             set: { model.setImageFileOutputFormat($0) }
                         )) {
@@ -275,7 +293,7 @@ struct SettingsView: View {
                             }
                         }
 
-                        Picker("最长边分辨率上限", selection: Binding(
+                        Picker(L10n.tr("最长边分辨率上限"), selection: Binding(
                             get: { settings.imageResizePreset },
                             set: { settings.setImageResizePreset($0) }
                         )) {
@@ -285,7 +303,7 @@ struct SettingsView: View {
                         }
 
                         HStack(spacing: 10) {
-                            Text("有损压缩画质")
+                            Text(L10n.tr("有损压缩画质"))
                                 .font(.system(size: 11))
                             Slider(value: Binding(
                                 get: { settings.imageQuality },
@@ -334,7 +352,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
 
-                        Toggle("移除 EXIF、GPS 拍摄地点与隐私元数据", isOn: Binding(
+                        Toggle(L10n.tr("移除 EXIF、GPS 拍摄地点与隐私元数据"), isOn: Binding(
                             get: { settings.stripImageMetadata },
                             set: { settings.setStripImageMetadata($0) }
                         ))
@@ -398,10 +416,10 @@ struct SettingsView: View {
                 }
 
                 // Section: Monitored Folders
-                settingsCard(title: "文件夹实时自动监控", icon: "folder.badge.eye") {
+                settingsCard(title: L10n.tr("文件夹实时自动监控"), icon: "folder.badge.eye") {
                     VStack(alignment: .leading, spacing: 10) {
                         if model.monitoredFolders.isEmpty {
-                            Text("尚未添加监控文件夹。可将系统的「截屏」或「录屏」存放目录加入监控。")
+                            Text(L10n.tr("尚未添加监控文件夹。可将系统的「截屏」或「录屏」存放目录加入监控。"))
                                 .font(.system(size: 10.5))
                                 .foregroundStyle(.secondary)
                         }
@@ -444,7 +462,7 @@ struct SettingsView: View {
                             Button {
                                 model.chooseWatchedFolder()
                             } label: {
-                                Label("添加监控目录", systemImage: "plus")
+                                Label(L10n.tr("添加监控目录"), systemImage: "plus")
                             }
                             .buttonStyle(.tactile)
                             .controlSize(.small)
@@ -461,7 +479,7 @@ struct SettingsView: View {
                         }
 
                         if !purchaseManager.isPro && !model.monitoredFolders.isEmpty {
-                            Text("免费版可监控 1 个文件夹；添加更多目录需要 Pro 权限。")
+                            Text(L10n.tr("免费版可监控 1 个文件夹；添加更多目录需要 Pro 权限。"))
                                 .font(.system(size: 10))
                                 .foregroundStyle(.tertiary)
                         }
@@ -469,14 +487,14 @@ struct SettingsView: View {
                 }
 
                 // Section: PDF & Pro Rules
-                settingsCard(title: "PDF 与 Pro 高级规则", icon: "sparkles") {
+                settingsCard(title: L10n.tr("PDF 与 Pro 高级规则"), icon: "sparkles") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Pro 可智能重采样优化 PDF 内嵌位图，保留全部矢量文本与表格结构。")
+                        Text(L10n.tr("Pro 可智能重采样优化 PDF 内嵌位图，保留全部矢量文本与表格结构。"))
                             .font(.system(size: 10.5))
                             .foregroundStyle(.secondary)
 
                         if !purchaseManager.isPro {
-                            Button("解锁 PDF 高级压缩") { model.requestPro(for: .pdfCompression) }
+                            Button(L10n.tr("解锁 PDF 高级压缩")) { model.requestPro(for: .pdfCompression) }
                                 .buttonStyle(.tactile)
                                 .controlSize(.small)
                         }
@@ -506,29 +524,29 @@ struct SettingsView: View {
                 }
 
                 // Section: Shortcuts & Finder Quick Actions
-                settingsCard(title: "快捷指令与 Finder 联动", icon: "command") {
+                settingsCard(title: L10n.tr("快捷指令与 Finder 联动"), icon: "command") {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("在 macOS「快捷指令」中可直接调用“压缩媒体文件”动作；在 Finder 中右键快速操作亦可一键调用。")
+                        Text(L10n.tr("在 macOS「快捷指令」中可直接调用“压缩媒体文件”动作；在 Finder 中右键快速操作亦可一键调用。"))
                             .font(.system(size: 10.5))
                             .foregroundStyle(.secondary)
                     }
                 }
 
                 // Section: Privacy & Storage
-                settingsCard(title: "隐私安全与数据保护", icon: "lock.shield.fill") {
+                settingsCard(title: L10n.tr("隐私安全与数据保护"), icon: "lock.shield.fill") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("所有媒体运算 100% 在 Mac 本地完成；绝不上传任何图片、视频或剪贴板隐私。")
+                        Text(L10n.tr("所有媒体运算 100% 在 Mac 本地完成；绝不上传任何图片、视频或剪贴板隐私。"))
                             .font(.system(size: 10.5))
                             .foregroundStyle(.secondary)
 
                         HStack(spacing: 8) {
-                            Button("查看隐私声明") { isShowingPrivacy = true }
+                            Button(L10n.tr("查看隐私声明")) { isShowingPrivacy = true }
                                 .buttonStyle(.tactile)
                                 .controlSize(.small)
 
                             Spacer()
 
-                            Button("清空本地历史记录") { model.clearHistory() }
+                            Button(L10n.tr("清空本地历史记录")) { model.clearHistory() }
                                 .buttonStyle(.tactile)
                                 .controlSize(.small)
                         }
@@ -557,15 +575,13 @@ struct SettingsView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
-                    Text(purchaseManager.isPro ? "DropSqueeze Pro 已激活" : "DropSqueeze 免费版")
+                    Text(purchaseManager.isPro ? L10n.tr("DropSqueeze Pro 已激活") : L10n.tr("DropSqueeze 免费版"))
                         .font(.system(size: 13, weight: .bold))
                     if purchaseManager.isPro {
                         StatusBadge(title: "PRO", color: .accentColor)
                     }
                 }
-                Text(purchaseManager.isPro
-                     ? "享有无限自动处理、PDF 重采样、多目录监控与全量高级规则"
-                     : "每日免费额度：图片 15 张 · 视频 3 个 · 单目录监控")
+                Text(purchaseManager.isPro ? L10n.tr("享有无限自动处理、PDF 重采样、多目录监控与全量高级规则") : L10n.tr("每日免费额度：图片 15 张 · 视频 3 个 · 单目录监控"))
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
@@ -573,7 +589,7 @@ struct SettingsView: View {
             Spacer()
 
             if !purchaseManager.isPro {
-                Button("升级 Pro") { model.requestPro(for: .general) }
+                Button(L10n.tr("升级 Pro")) { model.requestPro(for: .general) }
                     .buttonStyle(.tactile)
                     .controlSize(.small)
             }
@@ -771,11 +787,11 @@ struct PrivacyPolicyView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "lock.shield.fill")
                         .foregroundStyle(Color.accentColor)
-                    Text("隐私安全说明")
+                    Text(L10n.tr("隐私安全说明"))
                         .font(.system(size: 16, weight: .bold))
                 }
                 Spacer()
-                Button("完成") { dismiss() }
+                Button(L10n.tr("完成")) { dismiss() }
                     .buttonStyle(.tactile)
             }
 

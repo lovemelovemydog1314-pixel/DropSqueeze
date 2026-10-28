@@ -12,6 +12,7 @@ enum ImageComparisonMode: String, CaseIterable, Identifiable {
 
 struct OutputComparisonView: View {
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var l10n = LocalizationManager.shared
     let item: HistoryItem
 
     @State private var comparisonMode: ImageComparisonMode = .split
@@ -33,13 +34,13 @@ struct OutputComparisonView: View {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text("画质与细节对比")
+                        Text(L10n.tr("画质与细节对比"))
                             .font(.system(size: 15, weight: .bold))
                         if item.kind == .imageFile && item.resultBytes >= item.originalBytes {
-                            StatusBadge(title: "格式转换", color: .secondary, isSubtle: true)
+                            StatusBadge(title: L10n.tr("格式转换"), color: .secondary, isSubtle: true)
                         } else {
                             StatusBadge(
-                                title: "节省 \(ByteCountFormatter.string(fromByteCount: item.savedBytes, countStyle: .file))",
+                                title: L10n.tr("节省 %@", ByteCountFormatter.string(fromByteCount: item.savedBytes, countStyle: .file)),
                                 systemImage: "sparkles",
                                 color: .accentColor
                             )
@@ -54,16 +55,16 @@ struct OutputComparisonView: View {
                 Spacer()
 
                 if isImage && sourceImage != nil && outputImage != nil {
-                    Picker("模式", selection: $comparisonMode) {
+                    Picker(L10n.tr("模式"), selection: $comparisonMode) {
                         ForEach(ImageComparisonMode.allCases) { mode in
-                            Text(mode.rawValue).tag(mode)
+                            Text(L10n.tr(mode.rawValue)).tag(mode)
                         }
                     }
                     .pickerStyle(.segmented)
                     .frame(width: 170)
                 }
 
-                Button("完成") { dismiss() }
+                Button(L10n.tr("完成")) { dismiss() }
                     .buttonStyle(.tactile)
                     .keyboardShortcut(.defaultAction)
                     .controlSize(.regular)
@@ -83,7 +84,7 @@ struct OutputComparisonView: View {
             } else {
                 HStack(spacing: 14) {
                     comparisonPanel(
-                        title: "压缩前原件",
+                        title: L10n.tr("压缩前原件"),
                         size: item.originalBytes,
                         details: item.sourceDetails?.summary,
                         image: sourceImage,
@@ -91,7 +92,7 @@ struct OutputComparisonView: View {
                         pdf: sourcePDF
                     )
                     comparisonPanel(
-                        title: "压缩后结果",
+                        title: L10n.tr("压缩后结果"),
                         size: item.resultBytes,
                         details: item.outputDetails?.summary,
                         image: outputImage,
@@ -105,7 +106,7 @@ struct OutputComparisonView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "speaker.slash.fill")
                         .font(.system(size: 10))
-                    Text("视频预览默认静音；两侧可分别播放和拖动进度条比对关键帧画质。")
+                    Text(L10n.tr("视频预览默认静音；两侧可分别播放和拖动进度条比对关键帧画质。"))
                         .font(.system(size: 11))
                 }
                 .foregroundStyle(.tertiary)
@@ -165,7 +166,7 @@ struct OutputComparisonView: View {
                         VStack(spacing: 8) {
                             Image(systemName: "exclamationmark.triangle")
                                 .font(.title2)
-                            Text("无法预览")
+                            Text(L10n.tr("无法预览"))
                                 .font(.callout)
                         }
                         .foregroundStyle(.secondary)
@@ -298,7 +299,7 @@ struct SplitImageView: View {
                 VStack {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("原件 · \(ByteCountFormatter.string(fromByteCount: originalBytes, countStyle: .file))")
+                            Text(L10n.tr("原件 · %@", ByteCountFormatter.string(fromByteCount: originalBytes, countStyle: .file)))
                                 .font(.system(size: 11, weight: .bold))
                             if let sourceDetails, !sourceDetails.isEmpty {
                                 Text(sourceDetails)
@@ -318,7 +319,7 @@ struct SplitImageView: View {
                         Spacer()
 
                         VStack(alignment: .trailing, spacing: 2) {
-                            Text("压缩后 · \(ByteCountFormatter.string(fromByteCount: resultBytes, countStyle: .file))")
+                            Text(L10n.tr("压缩后 · %@", ByteCountFormatter.string(fromByteCount: resultBytes, countStyle: .file)))
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundStyle(Color.accentColor)
                             if let outputDetails, !outputDetails.isEmpty {
@@ -339,7 +340,7 @@ struct SplitImageView: View {
 
                     Spacer()
 
-                    Text("左右拖拽滑块对比画质细节 · 双击滑块复位")
+                    Text(L10n.tr("左右拖拽滑块对比画质细节 · 双击滑块复位"))
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 12)

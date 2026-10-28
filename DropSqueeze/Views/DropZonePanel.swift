@@ -125,8 +125,9 @@ final class DropZonePanelController {
     }
 }
 
-private struct DropZoneView: View {
+struct DropZoneView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var l10n = LocalizationManager.shared
     let onClose: () -> Void
     @State private var isTargeted = false
 
@@ -198,14 +199,14 @@ private struct DropZoneView: View {
                 }
             }
 
-            Text(model.isProcessing ? "正在静默压缩…" : (isTargeted ? "松开立即开始压缩" : "DropSqueeze 压缩舱"))
+            Text(model.isProcessing ? L10n.tr("正在静默压缩…") : (isTargeted ? L10n.tr("松开立即开始压缩") : L10n.tr("DropSqueeze 压缩舱")))
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(isTargeted ? Color.accentColor : Color.primary)
 
             Spacer(minLength: 4)
 
             if model.canUndoClipboardCompression {
-                Button("撤销") { model.undoClipboardCompression() }
+                Button(L10n.tr("撤销剪贴板")) { model.undoClipboardCompression() }
                     .buttonStyle(.tactile)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -219,7 +220,7 @@ private struct DropZoneView: View {
                     .background(Color.white.opacity(0.05), in: Circle())
             }
             .buttonStyle(.plain)
-            .help("隐藏悬浮压缩舱")
+            .help(L10n.tr("隐藏压缩舱"))
         }
     }
 
@@ -250,7 +251,7 @@ private struct DropZoneView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            Text(isTargeted ? "支持多文件批量拖入，后台自动按配置压缩" : model.statusMessage)
+            Text(isTargeted ? L10n.tr("支持多文件批量拖入，后台自动按配置压缩") : L10n.tr(model.statusMessage))
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -262,7 +263,7 @@ private struct DropZoneView: View {
         HStack(spacing: 4) {
             Image(systemName: "sparkles")
                 .font(.system(size: 8))
-            Text("拖入图片 · SVG · GIF · PDF · MOV · MP4 · M4V")
+            Text(L10n.tr("拖入图片 · SVG · GIF · PDF · MOV · MP4 · M4V"))
                 .font(.system(size: 9.5))
         }
         .foregroundStyle(.tertiary)
@@ -288,7 +289,7 @@ private struct DropZoneView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "slider.horizontal.3")
                         .font(.system(size: 9))
-                    Text("预设：\(model.settings.imageResizePreset.title)")
+                    Text(L10n.tr("预设：%@", L10n.tr(model.settings.imageResizePreset.title)))
                         .font(.system(size: 10, weight: .medium))
                         .lineLimit(1)
                 }
@@ -306,7 +307,7 @@ private struct DropZoneView: View {
                 HStack(spacing: 4) {
                     Image(systemName: model.settings.videoIncludesAudio ? "speaker.wave.2.fill" : "speaker.slash.fill")
                         .font(.system(size: 9))
-                    Text(model.settings.videoIncludesAudio ? "保留音频" : "录屏静音")
+                    Text(model.settings.videoIncludesAudio ? L10n.tr("保留音频") : L10n.tr("录屏静音"))
                         .font(.system(size: 10, weight: .semibold))
                 }
                 .padding(.horizontal, 7)
@@ -318,23 +319,23 @@ private struct DropZoneView: View {
                 .foregroundStyle(model.settings.videoIncludesAudio ? Color.secondary : Color.accentColor)
             }
             .buttonStyle(.plain)
-            .help(model.settings.videoIncludesAudio ? "点击切换为静音/剥离音频" : "已开启录屏静音，点击恢复保留音频")
+            .help(model.settings.videoIncludesAudio ? L10n.tr("点击切换为静音/剥离音频") : L10n.tr("已开启录屏静音，点击恢复保留音频"))
         }
     }
 
     @ViewBuilder
     private var queueSection: some View {
         HStack {
-            Text(model.isManualQueuePaused ? "队列已暂停" : (model.queuedFileCount > 0 ? "队列中还有 \(model.queuedFileCount) 个文件" : "正在处理最后一个文件"))
+            Text(model.isManualQueuePaused ? L10n.tr("队列已暂停") : (model.queuedFileCount > 0 ? L10n.tr("队列中还有 %d 个文件", model.queuedFileCount) : L10n.tr("正在处理最后一个文件")))
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
             Spacer()
-            Button(model.isManualQueuePaused ? "继续" : "暂停") {
+            Button(model.isManualQueuePaused ? L10n.tr("继续") : L10n.tr("暂停")) {
                 model.isManualQueuePaused ? model.resumeManualQueue() : model.pauseManualQueue()
             }
             .buttonStyle(.plain)
             .font(.system(size: 10, weight: .medium))
-            Button("停止队列") { model.stopManualQueue() }
+            Button(L10n.tr("停止队列")) { model.stopManualQueue() }
                 .buttonStyle(.plain)
                 .font(.system(size: 10, weight: .medium))
         }
@@ -346,11 +347,11 @@ private struct DropZoneView: View {
             Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(Color.accentColor)
-            Text("拖出：\(outputURL.lastPathComponent)")
+            Text(L10n.tr("拖出：%@", outputURL.lastPathComponent))
                 .font(.system(size: 10, weight: .medium))
                 .lineLimit(1)
             Spacer(minLength: 4)
-            Text("按住直接拖放")
+            Text(L10n.tr("按住直接拖放"))
                 .font(.system(size: 9))
                 .foregroundStyle(.secondary)
         }
@@ -373,7 +374,7 @@ private struct DropZoneView: View {
             HStack(spacing: 4) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 9))
-                Text("解锁 Pro · 本周已省 \(model.formattedSize(model.weeklySavedBytes))")
+                Text(L10n.tr("解锁 Pro · 本周已省 %@", model.formattedSize(model.weeklySavedBytes)))
                     .font(.system(size: 10, weight: .medium))
             }
             .foregroundStyle(Color.accentColor)

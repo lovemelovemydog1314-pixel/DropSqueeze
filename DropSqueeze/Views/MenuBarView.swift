@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 struct MenuBarView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var l10n = LocalizationManager.shared
     @State private var selectedTab = 0
     @State private var selectedComparison: HistoryItem?
     @State private var isShowingSavingsCard = false
@@ -19,9 +20,9 @@ struct MenuBarView: View {
                 .padding(.bottom, 10)
 
             // Segmented Tab Picker
-            Picker("页面", selection: $selectedTab) {
-                Text("概览").tag(0)
-                Text("设置").tag(1)
+            Picker(L10n.tr("页面"), selection: $selectedTab) {
+                Text(L10n.tr("概览")).tag(0)
+                Text(L10n.tr("设置")).tag(1)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 14)
@@ -70,7 +71,7 @@ struct MenuBarView: View {
                         StatusBadge(title: "PRO", systemImage: "sparkles", color: .accentColor)
                     }
                 }
-                Text(model.purchaseManager.isPro ? "极速静默媒体压缩" : "每日免费额度生效中")
+                Text(model.purchaseManager.isPro ? L10n.tr("极速静默媒体压缩") : L10n.tr("每日免费额度生效中"))
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
@@ -84,7 +85,7 @@ struct MenuBarView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "sparkles")
                             .font(.system(size: 10, weight: .semibold))
-                        Text("升级 Pro")
+                        Text(L10n.tr("升级 Pro"))
                             .font(.system(size: 11, weight: .semibold))
                     }
                     .padding(.horizontal, 8)
@@ -147,7 +148,7 @@ struct MenuBarView: View {
             HStack(spacing: 8) {
                 ProgressView()
                     .controlSize(.small)
-                Text("正在静默压缩…")
+                Text(L10n.tr("正在静默压缩…"))
                     .font(.system(size: 12, weight: .semibold))
                 Spacer()
                 if let progress = model.currentProgress {
@@ -196,7 +197,7 @@ struct MenuBarView: View {
             Spacer()
 
             if model.canUndoClipboardCompression {
-                Button("撤销剪贴板") {
+                Button(L10n.tr("撤销剪贴板")) {
                     model.undoClipboardCompression()
                 }
                 .buttonStyle(.bordered)
@@ -214,16 +215,16 @@ struct MenuBarView: View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
                 MetricCounterCard(
-                    title: "今日已压缩",
-                    value: "\(model.todayCompressionCount) 项",
-                    subtitle: model.purchaseManager.isPro ? "无限处理" : "剩余充足",
+                    title: L10n.tr("今日已压缩"),
+                    value: "\(model.todayCompressionCount) \(L10n.tr("items_unit"))",
+                    subtitle: model.purchaseManager.isPro ? L10n.tr("无限处理") : L10n.tr("剩余充足"),
                     icon: "arrow.down.circle"
                 )
 
                 MetricCounterCard(
-                    title: "累计节省空间",
+                    title: L10n.tr("累计节省空间"),
                     value: model.formattedSize(model.totalSavedBytes),
-                    subtitle: "本周省 \(model.formattedSize(model.weeklySavedBytes))",
+                    subtitle: L10n.tr("本周省 %@", model.formattedSize(model.weeklySavedBytes)),
                     icon: "sparkles",
                     tintColor: .accentColor
                 )
@@ -232,7 +233,7 @@ struct MenuBarView: View {
             // Achievement Report Action & Free Quota info
             HStack {
                 if !model.purchaseManager.isPro {
-                    Text("自动额度：图 \(model.automaticImageCountToday)/15 · 视 \(model.automaticVideoCountToday)/3")
+                    Text(L10n.tr("自动额度：图 %d/15 · 视 %d/3", model.automaticImageCountToday, model.automaticVideoCountToday))
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                 }
@@ -245,7 +246,7 @@ struct MenuBarView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "chart.bar.xaxis")
                             .font(.system(size: 10, weight: .semibold))
-                        Text("成就战报")
+                        Text(L10n.tr("成就战报"))
                             .font(.system(size: 11, weight: .semibold))
                     }
                     .padding(.horizontal, 8)
@@ -254,7 +255,7 @@ struct MenuBarView: View {
                     .foregroundStyle(Color.accentColor)
                 }
                 .buttonStyle(.tactile)
-                .help("查看并导出可视化省流成就卡片")
+                .help(L10n.tr("查看并导出可视化省流成就卡片"))
             }
         }
     }
@@ -270,7 +271,7 @@ struct MenuBarView: View {
                 HStack(spacing: 6) {
                     Image(systemName: model.isDropZoneVisible ? "eye.slash.fill" : "hand.draw.fill")
                         .font(.system(size: 11))
-                    Text(model.isDropZoneVisible ? "隐藏压缩舱" : "屏幕边缘压缩舱")
+                    Text(model.isDropZoneVisible ? L10n.tr("隐藏压缩舱") : L10n.tr("屏幕边缘压缩舱"))
                         .font(.system(size: 11, weight: .medium))
                     Spacer()
                     Circle()
@@ -291,14 +292,14 @@ struct MenuBarView: View {
             Button {
                 isShowingVideoQuickEdit = true
             } label: {
-                Label("视频轻编辑", systemImage: "scissors")
+                Label(L10n.tr("视频轻编辑"), systemImage: "scissors")
                     .font(.system(size: 11, weight: .medium))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 7)
                     .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .buttonStyle(.tactile)
-            .help("剪辑片段、导出 GIF 或提取音频")
+            .help(L10n.tr("剪辑片段、导出 GIF 或提取音频"))
         }
     }
 
@@ -306,14 +307,14 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("剪贴板收集栏")
+                    Text(L10n.tr("剪贴板收集栏"))
                         .font(.system(size: 11, weight: .semibold))
-                    Text("本次会话内存暂存 · 最多 \(ClipboardCollectionBuffer.maximumItemCount) 项，单图 10 MB")
+                    Text(L10n.tr("本次会话内存暂存 · 最多 %d 项，单图 10 MB", ClipboardCollectionBuffer.maximumItemCount))
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                 }
                 Spacer()
-                Toggle("收集", isOn: Binding(
+                Toggle(L10n.tr("收集"), isOn: Binding(
                     get: { model.settings.clipboardCollectionEnabled },
                     set: { model.setClipboardCollectionEnabled($0) }
                 ))
@@ -323,17 +324,17 @@ struct MenuBarView: View {
             }
 
             if model.settings.clipboardCollectionEnabled && model.clipboardCollectionItems.isEmpty {
-                Label("开启后，复制图片或 Finder 文件即可加入", systemImage: "doc.on.clipboard")
+                Label(L10n.tr("开启后，复制图片或 Finder 文件即可加入"), systemImage: "doc.on.clipboard")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 4)
             } else if !model.clipboardCollectionItems.isEmpty {
                 HStack {
-                    Text("\(model.clipboardCollectionItems.count) / \(ClipboardCollectionBuffer.maximumItemCount) 项")
+                    Text("\(model.clipboardCollectionItems.count) / \(ClipboardCollectionBuffer.maximumItemCount) \(L10n.tr("items_unit"))")
                         .font(.system(size: 9))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Button("清空") { model.clearClipboardCollection() }
+                    Button(L10n.tr("清空")) { model.clearClipboardCollection() }
                         .buttonStyle(.link)
                         .font(.system(size: 9))
                 }
@@ -381,7 +382,7 @@ struct MenuBarView: View {
             }
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(model.isWatchingFolder ? "文件夹自动监控中" : "文件夹监控已暂停")
+                Text(model.isWatchingFolder ? L10n.tr("文件夹自动监控中") : L10n.tr("文件夹监控已暂停"))
                     .font(.system(size: 11, weight: .semibold))
                 if let path = model.watchedFolderPath {
                     Text(URL(fileURLWithPath: path).lastPathComponent)
@@ -389,7 +390,7 @@ struct MenuBarView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 } else {
-                    Text("在设置中选择自动监控的截图文件夹")
+                    Text(L10n.tr("在设置中选择自动监控的截图文件夹"))
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
@@ -398,7 +399,7 @@ struct MenuBarView: View {
 
             Spacer(minLength: 4)
 
-            Button("配置") {
+            Button(L10n.tr("配置")) {
                 selectedTab = 1
             }
             .buttonStyle(.tactile)
@@ -419,18 +420,18 @@ struct MenuBarView: View {
     private var queueSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("批处理队列 · \(model.queueJobs.filter { $0.state == .queued || $0.state == .processing }.count) 待处理")
+                Text(L10n.tr("批处理队列 · %d 待处理", model.queueJobs.filter { $0.state == .queued || $0.state == .processing }.count))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
                 if model.isManualQueueRunning {
-                    Button(model.isManualQueuePaused ? "继续" : "暂停") {
+                    Button(model.isManualQueuePaused ? L10n.tr("继续") : L10n.tr("暂停")) {
                         model.isManualQueuePaused ? model.resumeManualQueue() : model.pauseManualQueue()
                     }
                     .buttonStyle(.borderless)
                     .font(.system(size: 10, weight: .medium))
 
-                    Button("停止") { model.stopManualQueue() }
+                    Button(L10n.tr("停止")) { model.stopManualQueue() }
                         .buttonStyle(.borderless)
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.red.opacity(0.8))
@@ -498,7 +499,7 @@ struct MenuBarView: View {
                                     .foregroundStyle(.secondary)
                             }
                             .buttonStyle(.plain)
-                            .help("从队列移除")
+                            .help(L10n.tr("从队列移除"))
                         } else if job.state == .skipped || job.state == .cancelled {
                             Button {
                                 model.retryQueueJob(job.id)
@@ -508,7 +509,7 @@ struct MenuBarView: View {
                                     .foregroundStyle(.secondary)
                             }
                             .buttonStyle(.plain)
-                            .help("重试此文件")
+                            .help(L10n.tr("重试此文件"))
                         }
                     }
                     .font(.system(size: 10))
@@ -527,11 +528,11 @@ struct MenuBarView: View {
     private var recentHistorySection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("最近压缩")
+                Text(L10n.tr("最近压缩"))
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("保留最近 10 项")
+                Text(L10n.tr("保留最近 10 项"))
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
             }
@@ -571,7 +572,7 @@ struct MenuBarView: View {
 
             // Saved Badge
             if item.kind == .imageFile && item.resultBytes >= item.originalBytes {
-                Text("格式转换")
+                Text(L10n.tr("格式转换"))
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             } else {
@@ -584,13 +585,13 @@ struct MenuBarView: View {
             // Quick Menu
             if item.outputPath != nil {
                 Menu {
-                    Button("打开压缩结果") { model.openOutput(for: item) }
-                    Button("在 Finder 中显示") { model.revealOutput(for: item) }
+                    Button(L10n.tr("打开压缩结果")) { model.openOutput(for: item) }
+                    Button(L10n.tr("在 Finder 中显示")) { model.revealOutput(for: item) }
                     if item.sourcePath != nil {
-                        Button("对比原件与结果") { selectedComparison = item }
+                        Button(L10n.tr("对比原件与结果")) { selectedComparison = item }
                     }
                     if item.kind == .imageFile, let path = item.outputPath {
-                        Button("识别并拷贝文字 (OCR)") {
+                        Button(L10n.tr("识别并拷贝文字 (OCR)")) {
                             Task {
                                 let text = await VisionTextExtractor.shared.extractText(from: URL(fileURLWithPath: path))
                                 if let text, !text.isEmpty {
@@ -629,7 +630,7 @@ struct MenuBarView: View {
                 NSApp.terminate(nil)
             } label: {
                 HStack(spacing: 3) {
-                    Text("退出")
+                    Text(L10n.tr("退出"))
                     Text("⌘Q")
                         .foregroundStyle(.secondary)
                 }

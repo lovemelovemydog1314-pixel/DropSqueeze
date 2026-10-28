@@ -4,6 +4,7 @@ import SwiftUI
 
 struct PaywallView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var l10n = LocalizationManager.shared
     @ObservedObject var purchaseManager: PurchaseManager
     let onClose: () -> Void
     @State private var isShowingPrivacy = false
@@ -23,7 +24,7 @@ struct PaywallView: View {
                         .background(Color.white.opacity(0.06), in: Circle())
                 }
                 .buttonStyle(.plain)
-                .help("关闭")
+                .help(L10n.tr("关闭"))
             }
 
             // Hero Brand Badge
@@ -51,13 +52,11 @@ struct PaywallView: View {
 
             // Headline
             VStack(spacing: 4) {
-                Text(purchaseManager.isPro ? "DropSqueeze Pro 已解锁" : (request?.reason.title ?? "解锁 DropSqueeze Pro"))
+                Text(purchaseManager.isPro ? L10n.tr("DropSqueeze Pro 已解锁") : (request?.reason.title ?? L10n.tr("解锁 DropSqueeze Pro")))
                     .font(.system(size: 18, weight: .heavy, design: .rounded))
                     .multilineTextAlignment(.center)
 
-                Text(purchaseManager.isPro
-                     ? "感谢支持！所有 Pro 规则、无限自动压缩与多文件夹监控已全部启用。"
-                     : (request?.reason.detail ?? "无限静默压缩、平台硬指标预设、Vision OCR 提取与多文件夹实时监控。"))
+                Text(purchaseManager.isPro ? L10n.tr("感谢支持！所有 Pro 规则、无限自动压缩与多文件夹监控已全部启用。") : (request?.reason.detail ?? L10n.tr("无限静默压缩、平台硬指标预设、Vision OCR 提取与多文件夹实时监控。")))
                     .font(.system(size: 11.5))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -70,7 +69,7 @@ struct PaywallView: View {
                     Image(systemName: "arrow.down.right.and.arrow.up.left")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(Color.accentColor)
-                    Text("本周已为你累计节省")
+                    Text(L10n.tr("本周已为你累计节省"))
                         .font(.system(size: 11, weight: .medium))
                     Spacer()
                     Text(model.formattedSize(request?.weeklySavedBytes ?? model.weeklySavedBytes))
@@ -103,7 +102,7 @@ struct PaywallView: View {
                 Button {
                     Task { await purchaseManager.restorePurchases() }
                 } label: {
-                    Text("恢复先前购买")
+                    Text(L10n.tr("恢复先前购买"))
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
@@ -111,7 +110,7 @@ struct PaywallView: View {
                 .disabled(purchaseManager.isPurchasing)
 
                 if purchaseManager.products.contains(where: { $0.type == .autoRenewable }) {
-                    Text("订阅将按 App Store 页面周期自动续费，可在 Apple ID 订阅管理中随时取消。")
+                    Text(L10n.tr("订阅将按 App Store 页面周期自动续费，可在 Apple ID 订阅管理中随时取消。"))
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                         .multilineTextAlignment(.center)
@@ -120,17 +119,17 @@ struct PaywallView: View {
                 // Legal links
                 HStack(spacing: 12) {
                     if let termsURL = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/") {
-                        Link("使用条款 (EULA)", destination: termsURL)
+                        Link(L10n.tr("使用条款 (EULA)"), destination: termsURL)
                     }
                     Text("·").foregroundStyle(.tertiary)
-                    Button("隐私安全声明") { isShowingPrivacy = true }
+                    Button(L10n.tr("隐私安全声明")) { isShowingPrivacy = true }
                         .buttonStyle(.plain)
                         .foregroundStyle(Color.accentColor)
                 }
                 .font(.system(size: 10))
             } else {
                 Spacer()
-                Button("完成") { onClose() }
+                Button(L10n.tr("完成")) { onClose() }
                     .buttonStyle(.tactile)
                     .controlSize(.regular)
             }
@@ -150,10 +149,10 @@ struct PaywallView: View {
 
     private var featureHighlightsGrid: some View {
         HStack(spacing: 8) {
-            featurePill(title: "无限静默压缩", icon: "infinity")
-            featurePill(title: "录屏静音压制", icon: "speaker.slash.fill")
-            featurePill(title: "端侧 OCR 提取", icon: "text.viewfinder")
-            featurePill(title: "多目录自动监控", icon: "folder.badge.gearshape")
+            featurePill(title: L10n.tr("无限静默压缩"), icon: "infinity")
+            featurePill(title: L10n.tr("录屏静音压制"), icon: "speaker.slash.fill")
+            featurePill(title: L10n.tr("端侧 OCR 提取"), icon: "text.viewfinder")
+            featurePill(title: L10n.tr("多目录自动监控"), icon: "folder.badge.gearshape")
         }
     }
 
@@ -165,7 +164,9 @@ struct PaywallView: View {
             Text(title)
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
@@ -181,17 +182,17 @@ struct PaywallView: View {
     @ViewBuilder
     private var productOptions: some View {
         if purchaseManager.isLoadingProducts {
-            ProgressView("正在读取 App Store 商品…")
+            ProgressView(L10n.tr("正在读取 App Store 商品…"))
                 .font(.system(size: 11))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
         } else if purchaseManager.products.isEmpty {
             VStack(spacing: 6) {
-                Text(purchaseManager.statusMessage ?? "当前没有可用的 Pro 商品。")
+                Text(purchaseManager.statusMessage ?? L10n.tr("当前没有可用的 Pro 商品。"))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                Button("重新连接") { Task { await purchaseManager.retryLoadingProducts() } }
+                Button(L10n.tr("重新连接")) { Task { await purchaseManager.retryLoadingProducts() } }
                     .buttonStyle(.tactile)
                     .controlSize(.small)
                     .disabled(purchaseManager.isPurchasing)
@@ -210,7 +211,7 @@ struct PaywallView: View {
                                     Text(product.displayName)
                                         .font(.system(size: 12, weight: .bold))
                                     if product.type == .nonConsumable {
-                                        StatusBadge(title: "终身买断", color: .accentColor, isSubtle: true)
+                                        StatusBadge(title: L10n.tr("终身买断"), color: .accentColor, isSubtle: true)
                                     }
                                 }
                                 Text(product.description)
@@ -243,7 +244,7 @@ struct PaywallView: View {
             }
 
             if purchaseManager.isPurchasing {
-                ProgressView("正在安全处理购买…")
+                ProgressView(L10n.tr("正在安全处理购买…"))
                     .font(.system(size: 10))
                     .controlSize(.small)
             }
@@ -251,20 +252,20 @@ struct PaywallView: View {
     }
 
     private func billingDescription(for product: Product) -> String {
-        guard product.type == .autoRenewable else { return "一次性买断，终生使用" }
+        guard product.type == .autoRenewable else { return L10n.tr("一次性买断，终生使用") }
         guard let period = product.subscription?.subscriptionPeriod else {
-            return "自动续费周期以 App Store 商品页面为准"
+            return L10n.tr("自动续费周期以 App Store 商品页面为准")
         }
         let unit: String
         switch period.unit {
-        case .day: unit = "天"
-        case .week: unit = "周"
-        case .month: unit = "个月"
-        case .year: unit = "年"
-        @unknown default: return "自动续费周期以 App Store 商品页面为准"
+        case .day: unit = L10n.tr("天")
+        case .week: unit = L10n.tr("周")
+        case .month: unit = L10n.tr("个月")
+        case .year: unit = L10n.tr("年")
+        @unknown default: return L10n.tr("自动续费周期以 App Store 商品页面为准")
         }
-        if period.value == 1 { return "每\(unit)自动续费" }
-        return "每 \(period.value) \(unit) 自动续费"
+        if period.value == 1 { return L10n.tr("每%@自动续费", unit) }
+        return L10n.tr("每 %d %@ 自动续费", period.value, unit)
     }
 }
 
