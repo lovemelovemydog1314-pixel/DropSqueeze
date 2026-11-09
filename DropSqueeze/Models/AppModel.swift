@@ -195,6 +195,23 @@ private struct FileCompressionOutcome {
     let didConvertFormat: Bool
 }
 
+/// Why a file did or did not produce a compressed copy. The folder watcher relies on the
+/// difference between a permanent and a temporary failure to decide whether to try again.
+private enum FileProcessingResult {
+    case compressed(FileCompressionOutcome)
+    /// The file is already as small as this configuration can make it.
+    case unchanged
+    /// Unsupported, not permitted, or the user is not entitled to this feature.
+    case rejected
+    /// Reading, writing or the daily quota failed in a way that may resolve on its own.
+    case retryable
+
+    var outcome: FileCompressionOutcome? {
+        if case .compressed(let outcome) = self { return outcome }
+        return nil
+    }
+}
+
 private struct ManualQueueItem {
     let id: UUID
     let batchID: UUID
@@ -433,6 +450,11 @@ final class AppModel: ObservableObject {
     private let totalCountKey = "totalCompressionCount"
     private let dailyCountKey = "dailyCompressionCount"
     private let dailyCountDateKey = "dailyCompressionDate"
+    private let generatedOutputPathsKey = "generatedOutputPaths"
+
+    /// How long the app remembers that a file is its own output, so a restart cannot re-compress it.
+    private static let generatedOutputRetention: TimeInterval = 30 * 86_400
+    private static let generatedOutputLimit = 2_000
 
     var totalSavedBytes: Int64 { defaults.object(forKey: totalSavedKey) as? Int64 ?? 0 }
     var weeklySavedBytes: Int64 { usageTracker.weeklySavedBytes }
@@ -468,6 +490,11 @@ final class AppModel: ObservableObject {
         if let data = defaults.data(forKey: historyKey),
            let items = try? PropertyListDecoder().decode([HistoryItem].self, from: data) {
             history = items
+        }
+
+        if let data = defaults.data(forKey: generatedOutputPathsKey),
+           let stored = try? PropertyListDecoder().decode([String: Date].self, from: data) {
+            generatedOutputPaths = stored.filter { Date().timeIntervalSince($0.value) < Self.generatedOutputRetention }
         }
 
         if let data = defaults.data(forKey: outputFolderBookmarkKey) {
@@ -875,7 +902,7 @@ final class AppModel: ObservableObject {
                 onProgress: { [weak self] progress in
                     Task { @MainActor [weak self] in self?.updateQueueProgress(item.id, progress: progress) }
                 }
-            )
+            ).outcome
             let cancelled = statusMessage.hasPrefix("已取消：")
             updateQueueJob(item.id) {
                 $0.state = outcome != nil ? .completed : (cancelled ? .cancelled : .skipped)
@@ -1026,7 +1053,7 @@ final class AppModel: ObservableObject {
                 maximumVideoSizeMBOverride: maximumVideoSizeMB,
                 maximumImageSizeMBOverride: maximumImageSizeMB,
                 outputDestinationOverride: outputDestination
-            ) {
+            ).outcome {
                 outcomes.append(outcome)
             }
         }
@@ -1287,7 +1314,7 @@ final class AppModel: ObservableObject {
         var compressedURLs: [URL] = []
         var outcomes: [FileCompressionOutcome] = []
         for url in urls {
-            if let outcome = await processFile(url, source: .automatic, reportStatus: false, notifyOnSuccess: false) {
+            if let outcome = await processFile(url, source: .automatic, reportStatus: false, notifyOnSuccess: false).outcome {
                 compressedURLs.append(outcome.outputURL)
                 outcomes.append(outcome)
             } else {
@@ -1342,9 +1369,10 @@ final class AppModel: ObservableObject {
         maximumVideoSizeMBOverride: Int? = nil,
         maximumImageSizeMBOverride: Double? = nil,
         outputDestinationOverride: CompressionOutputDestination? = nil,
+        suppressPaywall: Bool = false,
         onProgress: (@Sendable (Double) -> Void)? = nil
-    ) async -> FileCompressionOutcome? {
-        guard url.isFileURL else { return nil }
+    ) async -> FileProcessingResult {
+        guard url.isFileURL else { return .rejected }
         let ext = url.pathExtension.lowercased()
         let isSVG = SVGCompressor.isSVG(url: url)
         let detectedImageType = ImageCompressor.detectedTypeIdentifier(at: url)
@@ -1353,43 +1381,49 @@ final class AppModel: ObservableObject {
         let isPDF = ext == "pdf"
         guard isImage || isVideo || isPDF else {
             if reportStatus { statusMessage = "暂不支持 \(url.pathExtension.uppercased())" }
-            return nil
+            return .rejected
+        }
+        // Automatic retries must stay quiet; the user already saw the paywall prompt.
+        func promptPro(_ reason: PaywallReason) {
+            guard !suppressPaywall else { return }
+            requestPro(for: reason)
         }
         if isPDF, !purchaseManager.isPro {
             if reportStatus { statusMessage = "PDF 压缩需要 DropSqueeze Pro" }
-            requestPro(for: .pdfCompression)
-            return nil
+            promptPro(.pdfCompression)
+            return .rejected
         }
         if requiresOutputFolderAuthorization, outputDestinationOverride != .sameAsSource {
             if reportStatus { statusMessage = "压缩结果文件夹无法访问，请重新选择保存位置" }
-            return nil
+            return .rejected
         }
         let selectedImageOutputFormat = profileOverride?.imageFileOutputFormat ?? settings.imageFileOutputFormat
         if isImage, selectedImageOutputFormat == .webP, !purchaseManager.isPro {
             if reportStatus { statusMessage = "文件图片输出 WebP 需要 DropSqueeze Pro" }
-            requestPro(for: .feature(.fileWebPOutput))
-            return nil
+            promptPro(.feature(.fileWebPOutput))
+            return .rejected
         }
         if isImage, profileOverride?.retinaDownscaleEnabled == true, !purchaseManager.isPro {
             if reportStatus { statusMessage = "Retina 缩放配置需要 DropSqueeze Pro" }
-            requestPro(for: .feature(.retinaDownscale))
-            return nil
+            promptPro(.feature(.retinaDownscale))
+            return .rejected
         }
         if ext == "mov",
            profileOverride?.gifConversionEnabled == true,
            !purchaseManager.isPro {
             if reportStatus { statusMessage = "MOV 转 GIF 配置需要 DropSqueeze Pro" }
-            requestPro(for: .feature(.gifConversion))
-            return nil
+            promptPro(.feature(.gifConversion))
+            return .rejected
         }
 
         let processingPath = url.standardizedFileURL.path
-        guard processingFilePaths.insert(processingPath).inserted else { return nil }
+        guard processingFilePaths.insert(processingPath).inserted else { return .rejected }
         await fileProcessingGate.acquire()
         defer {
             processingFilePaths.remove(processingPath)
             Task { await fileProcessingGate.release() }
         }
+        guard !Task.isCancelled else { return .rejected }
 
         let reservation: UsageReservation?
         if source == .automatic {
@@ -1397,8 +1431,8 @@ final class AppModel: ObservableObject {
             guard let value = usageTracker.reserve(kind, isPro: purchaseManager.isPro) else {
                 let reason: PaywallReason = isImage ? .imageQuota : .videoQuota
                 statusMessage = isImage ? "今日免费图片额度已用完" : "今日免费视频额度已用完"
-                requestPro(for: reason)
-                return nil
+                promptPro(reason)
+                return .retryable
             }
             reservation = value
         } else {
@@ -1427,7 +1461,7 @@ final class AppModel: ObservableObject {
                   FileManager.default.isWritableFile(atPath: outputDirectory.path) else {
                 requiresOutputFolderAuthorization = true
                 if reportStatus { statusMessage = "无法写入压缩结果文件夹，请重新选择一个有写入权限的位置" }
-                return nil
+                return .rejected
             }
         }
         processingCount += 1
@@ -1464,7 +1498,7 @@ final class AppModel: ObservableObject {
                 }.value
                 guard let compressed else {
                     if reportStatus { statusMessage = "\(url.lastPathComponent)：没有更小的结果，原件保留" }
-                    return nil
+                    return .unchanged
                 }
                 outputURL = compressed.outputURL
                 originalSize = compressed.originalByteCount
@@ -1476,7 +1510,7 @@ final class AppModel: ObservableObject {
                 }.value
                 guard let (writtenURL, compressed) = output else {
                     if reportStatus { statusMessage = "\(url.lastPathComponent)：没有更小的结果，原件保留" }
-                    return nil
+                    return .unchanged
                 }
                 outputURL = writtenURL
                 originalSize = Int64(compressed.originalByteCount)
@@ -1518,7 +1552,7 @@ final class AppModel: ObservableObject {
                 }.value
                 guard let (writtenURL, compressed) = output else {
                     if reportStatus { statusMessage = "\(url.lastPathComponent)：没有更小的结果，原件保留" }
-                    return nil
+                    return .unchanged
                 }
                 outputURL = writtenURL
                 originalSize = Int64(compressed.originalByteCount)
@@ -1572,8 +1606,7 @@ final class AppModel: ObservableObject {
                 sourceDetails: sourceDetails,
                 outputDetails: outputDetails
             ))
-            generatedOutputPaths[outputURL.standardizedFileURL.path] = Date()
-            generatedOutputPaths = generatedOutputPaths.filter { Date().timeIntervalSince($0.value) < 86_400 }
+            registerGeneratedOutput(outputURL)
             succeeded = true
             if reportStatus {
                 if didConvertImageFormat {
@@ -1598,7 +1631,7 @@ final class AppModel: ObservableObject {
                 }
             }
             showFloatingPillHandler?()
-            return outcome
+            return .compressed(outcome)
         } catch {
             if reportStatus {
                 if let videoError = error as? VideoTranscodingError,
@@ -1608,7 +1641,7 @@ final class AppModel: ObservableObject {
                     statusMessage = "\(url.lastPathComponent)：\(error.localizedDescription)"
                 }
             }
-            return nil
+            return Self.isTransientFailure(error) ? .retryable : .rejected
         }
     }
 
@@ -1665,7 +1698,7 @@ final class AppModel: ObservableObject {
         for folder in folderBookmarks {
             if !purchaseManager.isPro, !directoryWatchers.isEmpty { break }
             guard let (url, refreshedData) = Self.resolveBookmark(folder.bookmarkData) else {
-                statusMessage = "監控文件夹授权已失效：\(folder.path)"
+                statusMessage = "监控文件夹授权已失效：\(folder.path)"
                 continue
             }
             if refreshedData != folder.bookmarkData,
@@ -1689,24 +1722,9 @@ final class AppModel: ObservableObject {
             return
         }
 
-        let watcher = DirectoryWatcher(directoryURL: url, rule: folder.rule) { [weak self] urls in
-            guard let self else { return }
-            let profile = folder.rule.resolvedCompressionProfile(savedProfiles: self.settings.savedProfiles)
-            if !folder.rule.usesCurrentCompressionProfile, profile == nil {
-                self.statusMessage = "监控文件夹配置已删除，请为 \(url.lastPathComponent) 选择其他配置"
-                return
-            }
-            for candidate in urls where self.generatedOutputPaths[candidate.standardizedFileURL.path] == nil {
-                Task {
-                    await self.processFile(
-                        candidate,
-                        source: .automatic,
-                        securityScopeURL: url,
-                        outputNameTemplate: folder.rule.outputNameTemplate,
-                        profileOverride: profile
-                    )
-                }
-            }
+        let watcher = DirectoryWatcher(directoryURL: url, rule: folder.rule) { [weak self] events in
+            guard let self else { return [] }
+            return await self.processWatchedFiles(events, folder: folder, directory: url)
         }
         guard watcher.start() else {
             url.stopAccessingSecurityScopedResource()
@@ -1716,6 +1734,42 @@ final class AppModel: ObservableObject {
         directoryWatchers[folder.id] = watcher
         scopedFolderURLs[folder.id] = url
         statusMessage = "正在监控：\(url.lastPathComponent)"
+    }
+
+    /// Compresses files reported by a folder watcher and answers which ones deserve another try.
+    private func processWatchedFiles(
+        _ events: [DirectoryWatcherEvent],
+        folder: FolderBookmark,
+        directory: URL
+    ) async -> Set<URL> {
+        guard settings.folderMonitoringEnabled, !events.isEmpty else { return [] }
+        let profile = folder.rule.resolvedCompressionProfile(savedProfiles: settings.savedProfiles)
+        if !folder.rule.usesCurrentCompressionProfile, profile == nil {
+            statusMessage = "监控文件夹配置已删除，请为 \(directory.lastPathComponent) 选择其他配置"
+            return []
+        }
+
+        let pattern = folder.rule.outputNamePattern
+        var retryURLs: Set<URL> = []
+        for event in events {
+            guard !Task.isCancelled, settings.folderMonitoringEnabled, directoryWatchers[folder.id] != nil else { break }
+            let path = event.url.standardizedFileURL.path
+            // Results this app produced, remembered across launches.
+            if generatedOutputPaths[path] != nil { continue }
+            // Results whose names follow this rule's template but predate the stored list.
+            if pattern.matches(event.url.deletingPathExtension().lastPathComponent) { continue }
+
+            let result = await processFile(
+                event.url,
+                source: .automatic,
+                securityScopeURL: directory,
+                outputNameTemplate: folder.rule.outputNameTemplate,
+                profileOverride: profile,
+                suppressPaywall: event.retryAttempt > 0
+            )
+            if case .retryable = result { retryURLs.insert(event.url) }
+        }
+        return retryURLs
     }
 
     private func stopFolderWatcher(id: UUID) {
@@ -1734,6 +1788,35 @@ final class AppModel: ObservableObject {
         monitoredFolders = folderBookmarks.map { MonitoredFolder(id: $0.id, path: $0.path, rule: $0.rule) }
     }
 
+    // MARK: - Generated outputs
+
+    private func registerGeneratedOutput(_ url: URL) {
+        generatedOutputPaths[url.standardizedFileURL.path] = Date()
+        let cutoff = Date().addingTimeInterval(-Self.generatedOutputRetention)
+        generatedOutputPaths = generatedOutputPaths.filter { $0.value >= cutoff }
+        if generatedOutputPaths.count > Self.generatedOutputLimit {
+            let recent = generatedOutputPaths.sorted { $0.value > $1.value }.prefix(Self.generatedOutputLimit)
+            generatedOutputPaths = Dictionary(uniqueKeysWithValues: recent.map { ($0.key, $0.value) })
+        }
+        defaults.set(try? PropertyListEncoder().encode(generatedOutputPaths), forKey: generatedOutputPathsKey)
+    }
+
+    /// Failures worth retrying are the ones that can clear up on their own: a screenshot that is
+    /// still being written, a temporarily unavailable volume, or a full disk.
+    private static func isTransientFailure(_ error: Error) -> Bool {
+        if let cocoaError = error as? CocoaError {
+            switch cocoaError.code {
+            case .fileReadNoSuchFile, .fileReadUnknown, .fileReadNoPermission, .fileReadCorruptFile,
+                 .fileLocking, .fileWriteUnknown, .fileWriteNoPermission, .fileWriteOutOfSpace,
+                 .fileWriteVolumeReadOnly:
+                return true
+            default:
+                return false
+            }
+        }
+        return error is POSIXError
+    }
+
     func applyOutputNameTemplate(_ template: String, to outputURL: URL, sourceURL: URL) throws -> URL {
         let inputStem = sourceURL.deletingPathExtension().lastPathComponent
         let date = DateFormatter()
@@ -1747,6 +1830,12 @@ final class AppModel: ObservableObject {
         if stem.isEmpty || stem == "." || stem == ".." { stem = "compressed" }
         let ext = outputURL.pathExtension
         let directory = outputURL.deletingLastPathComponent()
+        // In the same folder, a name identical to the source looks like a brand new file to the
+        // folder watcher, so the copy always keeps a suffix.
+        if directory.standardizedFileURL == sourceURL.deletingLastPathComponent().standardizedFileURL,
+           stem.caseInsensitiveCompare(inputStem) == .orderedSame {
+            stem += "-compressed"
+        }
         var suffix = 1
         while true {
             let candidateName = suffix == 1 ? "\(stem).\(ext)" : "\(stem)-\(suffix).\(ext)"

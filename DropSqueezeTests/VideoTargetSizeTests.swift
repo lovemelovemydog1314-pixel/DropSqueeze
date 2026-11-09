@@ -151,6 +151,59 @@ final class VideoTargetSizeTests: XCTestCase {
         XCTAssertLessThan(longestEdge, 1_024)
     }
 
+    func testConvertedImageStillRespectsMaximumWhenSourceIsAlreadyBelowIt() throws {
+        let png = try makeNoisePNG(width: 400, height: 400)
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(png as CFData, nil))
+        let jpeg = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(jpeg, UTType.jpeg.identifier as CFString, 1, nil))
+        CGImageDestinationAddImageFromSource(destination, source, 0, [kCGImageDestinationLossyCompressionQuality: 0.35] as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        XCTAssertLessThan(jpeg.length, 100_000)
+        let options = ImageCompressionOptions(resizeRetinaTo1x: false, outputWebP: false,
+            outputTypeIdentifier: UTType.png.identifier, maxPixelDimension: nil, jpegQuality: 0.88,
+            stripMetadata: true, maximumOutputSizeMB: 0.1)
+        let output = try XCTUnwrap(ImageCompressor.compress(data: jpeg as Data, typeIdentifier: UTType.jpeg.identifier, options: options))
+        XCTAssertLessThanOrEqual(output.data.count, 100_000)
+        XCTAssertEqual(output.typeIdentifier, UTType.png.identifier)
+    }
+
+    func testAnimatedGIFRejectsRequestedFormatConversion() throws {
+        let png = try makeNoisePNG(width: 20, height: 20)
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(png as CFData, nil))
+        let gif = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(gif, UTType.gif.identifier as CFString, 2, nil))
+        CGImageDestinationAddImageFromSource(destination, source, 0, nil)
+        CGImageDestinationAddImageFromSource(destination, source, 0, nil)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        let options = ImageCompressionOptions(resizeRetinaTo1x: false, outputWebP: false,
+            outputTypeIdentifier: UTType.jpeg.identifier, maxPixelDimension: nil, jpegQuality: 0.88,
+            stripMetadata: true, maximumOutputSizeMB: 0.1)
+        XCTAssertThrowsError(try ImageCompressor.compress(data: gif as Data, typeIdentifier: UTType.gif.identifier, options: options)) {
+            XCTAssertEqual(($0 as? ImageCompressionError)?.errorDescription, ImageCompressionError.animatedConversionUnsupported.errorDescription)
+        }
+    }
+
+    @MainActor
+    func testReservationsAcrossMidnightDoNotReleaseOrChargeNewDayReservations() throws {
+        let suite = "DropSqueezeTests.quota.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var date = Calendar.current.startOfDay(for: Date())
+        let tracker = UsageTracker(defaults: defaults, now: { date })
+        let old = try XCTUnwrap(tracker.reserve(.video, isPro: false))
+        date = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: 1, to: date))
+        let current = try XCTUnwrap(tracker.reserve(.video, isPro: false))
+        _ = try XCTUnwrap(tracker.reserve(.video, isPro: false))
+        _ = try XCTUnwrap(tracker.reserve(.video, isPro: false))
+        tracker.complete(old, succeeded: true)
+        XCTAssertEqual(tracker.videoCountToday, 0)
+        XCTAssertNil(tracker.reserve(.video, isPro: false))
+        tracker.complete(current, succeeded: true)
+        tracker.complete(current, succeeded: true)
+        XCTAssertEqual(tracker.videoCountToday, 1)
+        XCTAssertNil(tracker.reserve(.video, isPro: false))
+    }
+
     func testBatchScannerRecursivelyIncludesSupportedFilesAndDeduplicatesInputs() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("DropSqueeze-batch-scan-\(UUID().uuidString)", isDirectory: true)
@@ -1040,44 +1093,155 @@ final class VideoTargetSizeTests: XCTestCase {
         }
     }
 
-    func testSVGMinifierCleansMetadataAndExcessivePrecision() throws {
+    func testSVGMinifierRemovesEditorNoiseButKeepsDrawingContent() throws {
         let rawSVG = """
         <?xml version="1.0" encoding="utf-8"?>
         <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
         <!-- Generator: Adobe Illustrator 28.0, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
-        <svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" viewBox="0 0 100 100">
+        <svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" viewBox="0 0 100.000 100.000">
             <metadata>
-                <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+                <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cc="http://creativecommons.org/ns#">
                     <cc:Work rdf:about="" />
                 </rdf:RDF>
             </metadata>
-            <path data-name="Layer_1" d="M 10.123456 20.987654 L 30.555555 40.777777 Z" />
+            <sodipodi:namedview id="base" pagecolor="#ffffff" />
+            <path data-name="Layer_1" inkscape:label="p1" d="M 10.123456 20.987654 L 30.555555 40.777777 Z" />
         </svg>
         """
-        guard let data = rawSVG.data(using: .utf8) else {
-            XCTFail("Failed to convert raw SVG to Data")
-            return
-        }
-
+        let data = try XCTUnwrap(rawSVG.data(using: .utf8))
         let compressed = try XCTUnwrap(SVGCompressor.compress(data: data))
         XCTAssertLessThan(compressed.data.count, data.count)
-        guard let minified = String(data: compressed.data, encoding: .utf8) else {
-            XCTFail("Failed to decode minified SVG")
-            return
-        }
+
+        let minified = try XCTUnwrap(String(data: compressed.data, encoding: .utf8))
         XCTAssertFalse(minified.contains("<?xml"))
         XCTAssertFalse(minified.contains("<!DOCTYPE"))
         XCTAssertFalse(minified.contains("Adobe Illustrator"))
-        XCTAssertFalse(minified.contains("<metadata>"))
+        XCTAssertFalse(minified.contains("<metadata"))
         XCTAssertFalse(minified.contains("inkscape"))
+        XCTAssertFalse(minified.contains("sodipodi"))
         XCTAssertFalse(minified.contains("data-name"))
-        XCTAssertFalse(minified.contains("10.123456"))
-        XCTAssertTrue(minified.contains("10.12"))
-        XCTAssertTrue(minified.contains("<path d="))
+
+        // Drawing data keeps full precision; only redundant trailing zeros may disappear.
+        XCTAssertTrue(minified.contains("10.123456"), minified)
+        XCTAssertTrue(minified.contains("30.555555"), minified)
+        XCTAssertTrue(minified.contains("viewBox=\"0 0 100 100\""), minified)
+
+        // The result is still a single well-formed SVG document.
+        let reparsed = try XMLDocument(data: compressed.data, options: [.nodeLoadExternalEntitiesNever])
+        XCTAssertEqual(reparsed.rootElement()?.name, "svg")
 
         let testURL = URL(fileURLWithPath: "/tmp/sample.svg")
         XCTAssertTrue(SVGCompressor.isSVG(url: testURL))
         XCTAssertFalse(SVGCompressor.isSVG(url: URL(fileURLWithPath: "/tmp/sample.png")))
+    }
+
+    func testSVGMinifierKeepsTextRunsAndTheirSpacing() throws {
+        let rawSVG = #"<svg xmlns="http://www.w3.org/2000/svg"><text x="10.500" font-size="12.000">Hello   world <tspan>a</tspan> <tspan>b</tspan></text></svg>"#
+        let data = try XCTUnwrap(rawSVG.data(using: .utf8))
+        let compressed = try XCTUnwrap(SVGCompressor.compress(data: data))
+        let minified = try XCTUnwrap(String(data: compressed.data, encoding: .utf8))
+
+        XCTAssertTrue(minified.contains(">Hello   world <tspan>a</tspan> <tspan>b</tspan></text>"), minified)
+        XCTAssertTrue(minified.contains("font-size=\"12\""), minified)
+        XCTAssertTrue(minified.contains("x=\"10.5\""), minified)
+    }
+
+    func testSVGCompressorLeavesMalformedDocumentsAlone() {
+        let broken = Data(#"<svg xmlns="http://www.w3.org/2000/svg"><g></svg>"#.utf8)
+        XCTAssertThrowsError(try SVGCompressor.compress(data: broken)) { error in
+            XCTAssertEqual((error as? SVGCompressionError)?.errorDescription, "SVG 结构无法解析，已保留原文件")
+        }
+    }
+
+    func testWatchOutputNamePatternMatchesCustomTemplates() {
+        XCTAssertTrue(WatchOutputNamePattern(template: "{name}-mini").matches("Screen Shot 2026-mini"))
+        XCTAssertTrue(WatchOutputNamePattern(template: "{name}-mini").matches("Screen Shot 2026-mini-3"))
+        XCTAssertTrue(WatchOutputNamePattern(template: "{name}-{date}").matches("photo-20261107-205023"))
+        XCTAssertTrue(WatchOutputNamePattern(template: "{name}-compressed").matches("Screen Shot 2026-compressed"))
+
+        XCTAssertFalse(WatchOutputNamePattern(template: "{name}-mini").matches("Screen Shot 2026"))
+        XCTAssertFalse(WatchOutputNamePattern(template: "{name}-{date}").matches("photo-20261107"))
+        XCTAssertFalse(WatchOutputNamePattern(template: "{name}-{date}").matches("photo-2026-11-07-205023"))
+        // A template that only repeats the source name cannot be told apart from real sources.
+        XCTAssertFalse(WatchOutputNamePattern(template: "{name}").matches("Screen Shot 2026"))
+    }
+
+    func testFolderWatchRuleIgnoresItsOwnOutput() {
+        let rule = FolderWatchRule(scope: .images, outputNameTemplate: "{name}-mini")
+        XCTAssertTrue(rule.accepts(URL(fileURLWithPath: "/tmp/photo.png"), size: 1_000))
+        XCTAssertFalse(rule.accepts(URL(fileURLWithPath: "/tmp/photo-mini.png"), size: 1_000))
+        XCTAssertFalse(rule.accepts(URL(fileURLWithPath: "/tmp/photo-mini-2.png"), size: 1_000))
+    }
+
+    @MainActor
+    func testDirectoryWatcherRetriesFilesThatFailedTemporarily() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DropSqueezeWatcher-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let recorder = WatcherDeliveryRecorder()
+        let watcher = DirectoryWatcher(
+            directoryURL: directory,
+            rule: FolderWatchRule(scope: .images),
+            retryDelays: [0.3]
+        ) { events in
+            recorder.record(events)
+            // Fail the first delivery to simulate a file that is still being written.
+            return recorder.deliveryCount == 1 ? Set(events.map(\.url)) : []
+        }
+        XCTAssertTrue(watcher.start())
+        defer { watcher.stop() }
+
+        let fileURL = directory.appendingPathComponent("shot-\(UUID().uuidString).png")
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: fileURL)
+
+        guard await waitUntil(timeout: 12, { recorder.deliveryCount >= 1 }) else {
+            throw XCTSkip("Folder events are unavailable in this environment; retry delivery could not be observed.")
+        }
+        let didRetry = await waitUntil(timeout: 8) { recorder.deliveryCount >= 2 }
+
+        XCTAssertTrue(didRetry, "A file whose processing failed must be delivered again")
+        XCTAssertEqual(recorder.deliveryCount, 2, "Only one retry should follow a single failure")
+        XCTAssertEqual(recorder.events.last?.retryAttempt, 1)
+        XCTAssertEqual(recorder.events.last?.url.standardizedFileURL, fileURL.standardizedFileURL)
+    }
+
+    @MainActor
+    func testWatcherDeliversRecreatedFileWithSameTimestampAndSize() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("DropSqueeze-recreate-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recorder = WatcherDeliveryRecorder()
+        let watcher = DirectoryWatcher(directoryURL: directory, rule: FolderWatchRule(scope: .images)) { events in
+            recorder.record(events)
+            return []
+        }
+        XCTAssertTrue(watcher.start())
+        defer { watcher.stop() }
+        let url = directory.appendingPathComponent("image.png")
+        let data = Data([0x89, 0x50, 0x4e, 0x47])
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        try data.write(to: url)
+        try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
+        guard await waitUntil(timeout: 12, { recorder.deliveryCount >= 1 }) else {
+            throw XCTSkip("Folder events are unavailable in this environment.")
+        }
+        try FileManager.default.removeItem(at: url)
+        try await Task.sleep(nanoseconds: 3_000_000_000)
+        try data.write(to: url)
+        try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
+        let delivered = await waitUntil(timeout: 12) { recorder.deliveryCount >= 2 }
+        XCTAssertTrue(delivered, "A recreated file must be treated as new even if its stamp is unchanged")
+    }
+
+    private func waitUntil(timeout: TimeInterval, _ condition: @escaping () -> Bool) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return condition()
     }
 
     @MainActor
@@ -1135,5 +1299,28 @@ final class VideoTargetSizeTests: XCTestCase {
         case cannotAppendFrame
         case cannotFinishWriting
         case cannotCreateAudioBuffer
+    }
+}
+
+private final class WatcherDeliveryRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var batches: [[DirectoryWatcherEvent]] = []
+
+    func record(_ events: [DirectoryWatcherEvent]) {
+        lock.lock()
+        batches.append(events)
+        lock.unlock()
+    }
+
+    var deliveryCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return batches.count
+    }
+
+    var events: [DirectoryWatcherEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        return batches.flatMap { $0 }
     }
 }

@@ -14,6 +14,7 @@ enum ImageCompressionError: LocalizedError {
     case unsupportedFormat
     case unreadableImage
     case animatedImage
+    case animatedConversionUnsupported
     case encodingFailed
     case webPUnavailable
     case invalidTargetSize
@@ -24,6 +25,7 @@ enum ImageCompressionError: LocalizedError {
         case .unsupportedFormat: return "暂不支持这种图片格式"
         case .unreadableImage: return "无法读取图片"
         case .animatedImage: return "暂不支持这种动图格式；为避免丢帧已跳过"
+        case .animatedConversionUnsupported: return "暂不支持动图格式转换；为避免丢帧已跳过"
         case .encodingFailed: return "图片编码失败"
         case .webPUnavailable: return "此 macOS 版本暂不支持 WebP 编码"
         case .invalidTargetSize: return "图片体积上限需要设置为 0.1–5000 MB"
@@ -63,6 +65,11 @@ enum ImageCompressor {
         guard supportedTypes.contains(detectedType) else { throw ImageCompressionError.unsupportedFormat }
         let frameCount = CGImageSourceGetCount(source)
         guard frameCount > 0 else { throw ImageCompressionError.unreadableImage }
+        if frameCount > 1 {
+            guard detectedType == UTType.gif.identifier else { throw ImageCompressionError.animatedImage }
+            let requestedType = options.outputTypeIdentifier ?? (options.outputWebP ? UTType.webP.identifier : detectedType)
+            guard requestedType == detectedType else { throw ImageCompressionError.animatedConversionUnsupported }
+        }
         if let maximumOutputSizeMB = options.maximumOutputSizeMB {
             guard let maximumBytes = ImageOutputSizeLimit.bytes(for: maximumOutputSizeMB) else {
                 throw ImageCompressionError.invalidTargetSize
@@ -169,7 +176,9 @@ enum ImageCompressor {
     ) throws -> CompressedImage? {
         let unrestricted = options.adjusting(clearMaximumSizeLimit: true)
         if Int64(data.count) <= maximumBytes {
-            return try compress(data: data, typeIdentifier: typeIdentifier, options: unrestricted)
+            let candidate = try compress(data: data, typeIdentifier: typeIdentifier, options: unrestricted)
+            guard let candidate else { return nil }
+            if Int64(candidate.data.count) <= maximumBytes { return candidate }
         }
 
         guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],

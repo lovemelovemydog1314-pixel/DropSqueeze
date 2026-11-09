@@ -15,13 +15,20 @@ enum AutomaticUsageKind: String {
 struct UsageReservation {
     let kind: AutomaticUsageKind
     let countsTowardLimit: Bool
+    let id: UUID
+    let date: Date
 }
 
 @MainActor
 final class UsageTracker {
-    private let defaults = UserDefaults.standard
-    private var reservedImageCount = 0
-    private var reservedVideoCount = 0
+    private let defaults: UserDefaults
+    private let now: () -> Date
+    private var reservations: [UUID: UsageReservation] = [:]
+
+    init(defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init) {
+        self.defaults = defaults
+        self.now = now
+    }
 
     var imageCountToday: Int {
         resetDailyValuesIfNeeded()
@@ -40,27 +47,27 @@ final class UsageTracker {
 
     func reserve(_ kind: AutomaticUsageKind, isPro: Bool) -> UsageReservation? {
         resetDailyValuesIfNeeded()
-        guard !isPro else { return UsageReservation(kind: kind, countsTowardLimit: false) }
-
-        let currentCount = kind == .image ? imageCountToday : videoCountToday
-        let reservedCount = kind == .image ? reservedImageCount : reservedVideoCount
-        guard currentCount + reservedCount < kind.dailyLimit else { return nil }
-
-        if kind == .image { reservedImageCount += 1 } else { reservedVideoCount += 1 }
-        return UsageReservation(kind: kind, countsTowardLimit: true)
+        let date = now()
+        let reservation = UsageReservation(kind: kind, countsTowardLimit: !isPro, id: UUID(), date: date)
+        if !isPro {
+            let currentCount = kind == .image ? imageCountToday : videoCountToday
+            let reservedCount = reservations.values.filter {
+                $0.kind == kind && $0.countsTowardLimit && Calendar.current.isDate($0.date, inSameDayAs: date)
+            }.count
+            guard currentCount + reservedCount < kind.dailyLimit else { return nil }
+        }
+        reservations[reservation.id] = reservation
+        return reservation
     }
 
     func complete(_ reservation: UsageReservation, succeeded: Bool, savedBytes: Int64 = 0) {
-        if reservation.countsTowardLimit {
-            if reservation.kind == .image {
-                reservedImageCount = max(0, reservedImageCount - 1)
-                if succeeded { defaults.set(imageCountToday + 1, forKey: "automaticImageCountToday") }
-            } else {
-                reservedVideoCount = max(0, reservedVideoCount - 1)
-                if succeeded { defaults.set(videoCountToday + 1, forKey: "automaticVideoCountToday") }
-            }
+        guard let active = reservations.removeValue(forKey: reservation.id) else { return }
+        resetDailyValuesIfNeeded()
+        // Quota is charged on the day the work was reserved.
+        if active.countsTowardLimit, succeeded, Calendar.current.isDate(active.date, inSameDayAs: now()) {
+            let key = active.kind == .image ? "automaticImageCountToday" : "automaticVideoCountToday"
+            defaults.set(defaults.integer(forKey: key) + 1, forKey: key)
         }
-
         if succeeded, savedBytes > 0 { recordSavedBytes(savedBytes) }
     }
 
@@ -71,14 +78,12 @@ final class UsageTracker {
     }
 
     private func resetDailyValuesIfNeeded() {
-        let today = Calendar.current.startOfDay(for: Date())
+        let today = Calendar.current.startOfDay(for: now())
         guard let storedDate = defaults.object(forKey: "automaticQuotaDate") as? Date,
               Calendar.current.isDate(storedDate, inSameDayAs: today) else {
             defaults.set(today, forKey: "automaticQuotaDate")
             defaults.set(0, forKey: "automaticImageCountToday")
             defaults.set(0, forKey: "automaticVideoCountToday")
-            reservedImageCount = 0
-            reservedVideoCount = 0
             return
         }
     }
@@ -91,7 +96,7 @@ final class UsageTracker {
     }
 
     private var currentWeekKey: Int {
-        let components = Calendar.current.dateComponents([.yearForWeekOfYear, .weekOfYear], from: Date())
+        let components = Calendar.current.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now())
         return (components.yearForWeekOfYear ?? 0) * 100 + (components.weekOfYear ?? 0)
     }
 }

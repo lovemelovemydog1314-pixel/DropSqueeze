@@ -47,6 +47,100 @@ enum FolderWatchScope: String, CaseIterable, Codable, Identifiable, Equatable {
     }
 }
 
+/// Recognises file names that a folder rule produced itself, so watching a folder cannot feed on
+/// its own output — even after a restart, when the in-memory list of generated files is gone.
+struct WatchOutputNamePattern: Equatable {
+    private enum Token: Equatable {
+        case literal(String)
+        case sourceName
+        case timestamp
+    }
+
+    private let tokens: [Token]
+    private let isUsable: Bool
+
+    init(template: String) {
+        var tokens: [Token] = []
+        var literal = ""
+        var rest = Substring(template)
+
+        while let open = rest.firstIndex(of: "{"),
+              let close = rest[rest.index(after: open)...].firstIndex(of: "}") {
+            literal += rest[..<open]
+            let placeholder = rest[rest.index(after: open)..<close]
+            if !literal.isEmpty {
+                tokens.append(.literal(literal))
+                literal = ""
+            }
+            switch placeholder {
+            case "name": tokens.append(.sourceName)
+            case "date": tokens.append(.timestamp)
+            default: tokens.append(.literal("{" + placeholder + "}"))
+            }
+            rest = rest[rest.index(after: close)...]
+        }
+        literal += rest
+        if !literal.isEmpty { tokens.append(.literal(literal)) }
+
+        self.tokens = tokens
+        // `{name}` on its own renders the original name, so treating it as "generated" would skip
+        // every file in the folder. Only templates that add something are used for filtering.
+        self.isUsable = tokens.contains { token in
+            switch token {
+            case .literal(let value): return !value.isEmpty
+            case .timestamp: return true
+            case .sourceName: return false
+            }
+        }
+    }
+
+    func matches(_ stem: String) -> Bool {
+        guard isUsable else { return false }
+        if matchesExactly(Array(stem)) { return true }
+        // Name collisions append `-2`, `-3`, ... to the generated file.
+        guard let dash = stem.lastIndex(of: "-") else { return false }
+        let collisionSuffix = stem[stem.index(after: dash)...]
+        guard !collisionSuffix.isEmpty,
+              collisionSuffix.count <= 3,
+              collisionSuffix.allSatisfy(\.isNumber) else { return false }
+        return matchesExactly(Array(stem[..<dash]))
+    }
+
+    private func matchesExactly(_ characters: [Character]) -> Bool {
+        guard !characters.isEmpty else { return false }
+        return match(tokens[...], characters, 0)
+    }
+
+    private func match(_ tokens: ArraySlice<Token>, _ characters: [Character], _ index: Int) -> Bool {
+        guard let token = tokens.first else { return index == characters.count }
+        let rest = tokens.dropFirst()
+        switch token {
+        case .literal(let value):
+            let literal = Array(value)
+            guard index + literal.count <= characters.count else { return false }
+            for (offset, character) in literal.enumerated() where characters[index + offset] != character {
+                return false
+            }
+            return match(rest, characters, index + literal.count)
+        case .timestamp:
+            // `{date}` renders as `yyyyMMdd-HHmmss`.
+            guard index + 15 <= characters.count else { return false }
+            for offset in 0..<8 where !characters[index + offset].isNumber { return false }
+            guard characters[index + 8] == "-" else { return false }
+            for offset in 9..<15 where !characters[index + offset].isNumber { return false }
+            return match(rest, characters, index + 15)
+        case .sourceName:
+            guard index < characters.count else { return false }
+            var split = characters.count
+            while split > index {
+                if match(rest, characters, split) { return true }
+                split -= 1
+            }
+            return false
+        }
+    }
+}
+
 struct FolderWatchRule: Codable, Equatable {
     var scope: FolderWatchScope = .screenshotsAndRecordings
     var includeSubfolders = false
@@ -99,6 +193,10 @@ struct FolderWatchRule: Codable, Equatable {
         CompressionProfileReference.isCurrent(compressionProfileIdentifier)
     }
 
+    var outputNamePattern: WatchOutputNamePattern {
+        WatchOutputNamePattern(template: outputNameTemplate)
+    }
+
     func accepts(_ url: URL, size: Int64) -> Bool {
         let ext = url.pathExtension.lowercased()
         let isSVG = ext == "svg"
@@ -111,6 +209,8 @@ struct FolderWatchRule: Codable, Equatable {
         let stem = url.deletingPathExtension().lastPathComponent
         let lowerStem = stem.lowercased()
         guard !lowerStem.hasSuffix("-compressed"), !lowerStem.contains("-compressed-") else { return false }
+        // Files named the way this rule names its output are the rule's own results.
+        guard !outputNamePattern.matches(stem) else { return false }
         if !filenameContains.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            !lowerStem.localizedCaseInsensitiveContains(filenameContains.trimmingCharacters(in: .whitespacesAndNewlines)) { return false }
         if let maximumFileSizeMB, maximumFileSizeMB > 0,
